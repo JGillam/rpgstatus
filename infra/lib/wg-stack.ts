@@ -136,11 +136,17 @@ export class WgStack extends cdk.Stack {
     // create/join routes. Route settings aren't exposed on the L2, so use the CfnStage
     // escape hatch on the auto-created `$default` stage.
     const cfnStage = httpApi.defaultStage!.node.defaultChild as apigwv2.CfnStage;
-    cfnStage.defaultRouteSettings = { throttlingRateLimit: 50, throttlingBurstLimit: 30 };
-    cfnStage.routeSettings = {
-      'POST /sessions': { throttlingRateLimit: 5, throttlingBurstLimit: 5 },
-      'POST /sessions/{code}/join': { throttlingRateLimit: 5, throttlingBurstLimit: 5 },
-    };
+    // addPropertyOverride writes the template verbatim — use PascalCase keys. The L1 typed
+    // properties (defaultRouteSettings/routeSettings) leaked camelCase field names, which
+    // CloudFormation rejects on AWS::ApiGatewayV2::Stage RouteSettings.
+    cfnStage.addPropertyOverride('DefaultRouteSettings', {
+      ThrottlingRateLimit: 50,
+      ThrottlingBurstLimit: 30,
+    });
+    cfnStage.addPropertyOverride('RouteSettings', {
+      'POST /sessions': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 5 },
+      'POST /sessions/{code}/join': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 5 },
+    });
 
     // 6. Route 53 hosted zone — explicit attributes, so no context lookup at synth.
     const zone = route53.PublicHostedZone.fromHostedZoneAttributes(this, 'Zone', {
