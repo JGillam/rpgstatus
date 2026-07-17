@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import type {
   AppliedCondition,
   CoarseHp,
+  ConditionCategory,
   GmSnapshot,
   Mob,
   MobTier,
@@ -21,26 +22,6 @@ import {
   nextCounter,
 } from '@domain';
 import {
-  Check,
-  ChevronsRight,
-  Copy,
-  Download,
-  Eye,
-  EyeOff,
-  Heart,
-  HeartCrack,
-  Minus,
-  Plus,
-  Power,
-  ScrollText,
-  ShieldAlert,
-  Skull,
-  Trash2,
-  UserPlus,
-  X,
-  type LucideIcon,
-} from 'lucide-react';
-import {
   addMobs,
   adjustGlory,
   adjustRuin,
@@ -57,26 +38,31 @@ import {
 } from '@/lib/api';
 import { clearIdentity, loadIdentity } from '@/lib/identity';
 import { useSessionState } from '@/lib/useSessionState';
-import { coarseColor, coarseLabel, conditionColor, statusColor, statusLabel } from '@/lib/theme';
+import { coarseColor, coarseLabel, statusColor, statusLabel } from '@/lib/theme';
 import { CONDITIONS, conditionDef } from '@/lib/conditions';
-import { FreshnessDot } from '@/components/FreshnessDot';
-import { BottomSheet } from '@/components/BottomSheet';
 import { Dialog } from '@/components/Dialog';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 const STATUSES: PlayerStatus[] = ['active', 'down', 'dying', 'dead', 'stable'];
 const TIERS: MobTier[] = ['Troops', 'Elite', 'Adversary'];
 const MOB_LABEL_MAX = 40;
 
-const COARSE_ICON: Record<CoarseHp, LucideIcon> = {
-  healthy: Heart,
-  minor: ShieldAlert,
-  gravely: HeartCrack,
-  dead: Skull,
+// Condition-chip theming for the GM console — a LOCAL remap that matches the player
+// screen (Play.tsx) so both agree: damage = red, affliction = violet, impairment = gold.
+// (theme.ts keeps impairment blue elsewhere; the prototype's name-based palette is this.)
+const CONDITION_CHIP_COLOR: Record<ConditionCategory, string> = {
+  damage: 'var(--color-red)',
+  affliction: 'var(--color-violet)',
+  impairment: 'var(--color-gold)',
 };
+const chipColor = (c: ConditionCategory): string => CONDITION_CHIP_COLOR[c];
+
+/** Alpha'd colour from a token/var — for subtle tints on var-based colours. */
+const alpha = (color: string, pct: number): string =>
+  `color-mix(in srgb, ${color} ${pct}%, transparent)`;
+
+const tierColor = (t: MobTier): string =>
+  t === 'Elite' ? 'var(--color-gold)' : t === 'Adversary' ? 'var(--color-violet)' : 'var(--color-muted)';
 
 interface Freshness {
   secondsAgo: number;
@@ -84,7 +70,7 @@ interface Freshness {
   error: boolean;
 }
 
-/** Target of the shared condition picker sheet — a player card or a mob row. */
+/** Target of the shared condition picker — a player card or a mob row. */
 type CondTarget = { kind: 'player'; id: string } | { kind: 'mob'; id: string };
 
 // ---------------------------------------------------------------------------
@@ -194,6 +180,9 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
   const admitted = players.filter((p) => p.presence === 'admitted');
   const lobby = players.filter((p) => p.presence === 'pending' && !admitting.has(p.id));
 
+  const activePlayers = admitted.filter((p) => p.status === 'active');
+  const actedCount = activePlayers.filter((p) => p.actedThisRound).length;
+
   const nameByIndex = useMemo(() => {
     const m = new Map<number, string>();
     for (const p of snapshot.players) m.set(p.index, p.name);
@@ -204,7 +193,10 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
   const [condTarget, setCondTarget] = useState<CondTarget | null>(null);
   const [tooltipId, setTooltipId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  // `confirm === 'round'` drives the INLINE round confirm inside the Round Control card;
+  // `confirm === 'end'` drives the End-session modal. `ended` shows the farewell overlay.
   const [confirm, setConfirm] = useState<'end' | 'round' | null>(null);
+  const [ended, setEnded] = useState(false);
 
   // --- optimistic plumbing --------------------------------------------------
   function enqueue(key: string, send: () => Promise<void>, revert: () => void) {
@@ -271,6 +263,7 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
     );
 
   const doNextRound = () => {
+    setConfirm(null);
     setSessionOv((o) => ({ ...o, round: session.round + 1 }));
     setPlayerOv((o) => {
       const n = { ...o };
@@ -362,6 +355,11 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
       ? players.find((p) => p.id === condTarget.id)
       : mobs.find((m) => m.id === condTarget.id)
     : undefined;
+  const targetName = condTarget
+    ? condTarget.kind === 'player'
+      ? players.find((p) => p.id === condTarget.id)?.name
+      : mobs.find((m) => m.id === condTarget.id)?.label
+    : undefined;
 
   const addConditionToTarget = (id: string) => {
     if (!condTarget || !targetEntity) return;
@@ -378,7 +376,7 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
   };
   const confirmEnd = async () => {
     await endSession(code, token);
-    onEnded();
+    setEnded(true); // show the farewell overlay; "start new" navigates via onEnded
   };
 
   const exportLog = () => {
@@ -407,139 +405,175 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
   };
 
   const tooltipDef = tooltipId ? conditionDef(tooltipId) : undefined;
+  const chapterName = session.settings?.chapterName?.trim();
 
   return (
-    <div className="min-h-dvh bg-bg">
-      {/* Header */}
-      <header className="sticky top-0 z-20 border-b border-default bg-panel/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-3 md:px-6">
-          <div className="flex flex-col">
-            <span className="font-display text-lg font-bold tracking-[0.16em] text-gold">
-              WRATH &amp; GLORY
+    <div className="relative min-h-dvh bg-bg">
+      {/* Ambient dual radial gradient — gold glow top, dark vignette bottom. */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-[1]"
+        style={{
+          background:
+            'radial-gradient(130% 100% at 50% -10%, rgba(240,180,41,0.05), transparent 45%), radial-gradient(120% 90% at 50% 105%, rgba(0,0,0,0.6), transparent 55%)',
+        }}
+      />
+
+      <div className="relative z-[2] min-h-dvh pb-16">
+        {/* Header */}
+        <header
+          className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-default px-4 py-4 md:px-6 xl:px-[26px]"
+          style={{ background: 'linear-gradient(180deg,#1a150d,#100c07)' }}
+        >
+          <div className="flex min-w-0 items-baseline gap-4">
+            <span className="whitespace-nowrap font-display text-2xl font-bold leading-none tracking-[2px]">
+              WRATH <span className="text-gold">&amp;</span> GLORY
             </span>
-            <span className="text-xs uppercase tracking-[0.2em] text-muted">GM Console</span>
-          </div>
-
-          <div className="flex items-baseline gap-2">
-            <span className="text-xs uppercase tracking-wide text-muted">Join code</span>
-            <span className="font-display text-2xl font-bold tracking-[0.35em] text-gold">
-              {code}
+            <span className="hidden whitespace-nowrap font-body text-[11px] font-medium italic leading-none tracking-[1px] text-muted sm:inline">
+              Session Assistant · Game Master&apos;s Console
             </span>
           </div>
 
-          <div className="flex items-center gap-4">
-            <FreshnessDot
-              secondsAgo={freshness.secondsAgo}
-              updatedAt={freshness.updatedAt}
-              error={freshness.error}
-            />
-            <Button variant="destructive" size="sm" onClick={() => setConfirm('end')}>
-              <Power /> End session
-            </Button>
-          </div>
-        </div>
-      </header>
+          <div className="flex flex-wrap items-center justify-end gap-x-[18px] gap-y-2">
+            <div className="flex flex-col items-end gap-1">
+              <span className="font-display text-[8px] font-semibold leading-none tracking-[2px] text-muted">
+                JOIN CODE
+              </span>
+              <span className="rounded border border-default bg-panel px-2.5 py-[5px] font-display text-sm font-bold leading-none tracking-[4px] text-gold">
+                {code}
+              </span>
+            </div>
 
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 md:px-6">
-        {/* Counters + round */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <FreshnessBadge freshness={freshness} chapterName={chapterName} />
+
+            <button
+              type="button"
+              onClick={() => setConfirm('end')}
+              className="rounded border border-strong bg-transparent px-3 py-[9px] font-display text-[10px] font-semibold leading-none tracking-[1px] text-muted transition-colors hover:border-wounds hover:text-[#ff9498]"
+            >
+              END SESSION
+            </button>
+          </div>
+        </header>
+
+        {/* Counters row */}
+        <div className="grid gap-3.5 px-4 pt-[18px] md:grid-cols-[1.15fr_0.92fr_0.92fr] md:px-6 xl:px-[26px]">
+          <RoundControlCard
+            round={session.round}
+            actedCount={actedCount}
+            activeCount={activePlayers.length}
+            confirming={confirm === 'round'}
+            onAsk={() => setConfirm('round')}
+            onConfirm={doNextRound}
+            onCancel={() => setConfirm(null)}
+          />
           <CounterCard
-            label="Glory"
+            label="GLORY"
+            note="party · always seen"
             value={session.glory}
             color="var(--color-gold)"
+            glow="0 0 26px rgba(240,180,41,0.45)"
+            theme="gold"
+            hint="tap the number to set a value"
             onDelta={deltaGlory}
             onSet={setGlory}
           />
           <CounterCard
-            label="Ruin"
+            label="RUIN"
             value={session.ruin}
-            color="var(--color-ruin)"
+            color="var(--color-violet)"
+            glow="0 0 26px rgba(169,139,255,0.4)"
+            theme="ruin"
+            labelColor="var(--color-violet)"
+            headerAction={<RuinToggle shown={session.showRuin} onToggle={toggleShowRuin} />}
             onDelta={deltaRuin}
             onSet={setRuin}
-          >
-            <PillToggle
-              on={session.showRuin}
-              onToggle={toggleShowRuin}
-              onContent={
-                <>
-                  <Eye className="size-3.5" /> Shown
-                </>
-              }
-              offContent={
-                <>
-                  <EyeOff className="size-3.5" /> Hidden
-                </>
-              }
-            />
-          </CounterCard>
-          <RoundCard round={session.round} onNext={() => setConfirm('round')} />
+          />
         </div>
 
-        {/* Management columns */}
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-          <div className="flex flex-col gap-5 xl:col-span-2">
-            <PartyPanel players={admitted} actions={playerActions} />
-            <MobPanel mobs={mobs} actions={mobActions} onAdd={() => setAddOpen(true)} />
-          </div>
-          <div className="flex flex-col gap-5">
-            <LobbyPanel lobby={lobby} onAdmit={onAdmit} onIgnore={onIgnore} />
+        {/* Main: party roster (fluid) + 384px sidebar */}
+        <div className="grid items-start gap-4 px-4 pt-[18px] md:px-6 xl:grid-cols-[minmax(0,1fr)_384px] xl:px-[26px]">
+          <PartyRoster players={admitted} actions={playerActions} />
+
+          <div className="flex flex-col gap-4">
+            <MobsPanel mobs={mobs} actions={mobActions} onAdd={() => setAddOpen(true)} />
             <LogPanel log={log} nameByIndex={nameByIndex} onExport={exportLog} />
+            <LobbyPanel lobby={lobby} onAdmit={onAdmit} onIgnore={onIgnore} />
           </div>
         </div>
-      </main>
+      </div>
 
       {/* ---- Condition picker (shared, player or mob) ---- */}
-      <BottomSheet
+      <Dialog
         open={condTarget !== null}
         onClose={() => setCondTarget(null)}
-        title="Add condition"
-        footer={
-          <Button className="w-full" onClick={() => setCondTarget(null)}>
-            Done
-          </Button>
+        widthClass="max-w-[520px]"
+        title={
+          <span className="flex flex-col gap-1">
+            <span>Add condition</span>
+            {targetName && (
+              <span className="font-body text-[11px] font-normal italic tracking-normal text-muted">
+                to {targetName}
+              </span>
+            )}
+          </span>
         }
       >
-        <div className="flex flex-col gap-1.5 pb-2">
+        <div className="grid grid-cols-2 gap-2">
           {CONDITIONS.map((def) => {
             const applied = targetEntity?.conditions.find((c) => c.id === def.id);
-            const color = conditionColor(def.category);
+            const sub = applied
+              ? def.stacks && applied.rank
+                ? 'Applied · adds a rank'
+                : 'Applied'
+              : def.stacks
+                ? 'Stackable'
+                : 'Single';
             return (
               <button
                 key={def.id}
                 type="button"
                 onClick={() => addConditionToTarget(def.id)}
-                className="flex items-start gap-3 rounded-md border border-default bg-raised px-3 py-2 text-left transition-colors hover:border-emphasis"
+                className="flex flex-col items-start gap-1 rounded-[4px] border px-[11px] py-[9px] text-left transition-colors hover:border-emphasis"
+                style={{
+                  background: applied ? 'var(--color-raised)' : 'var(--color-bg)',
+                  borderColor: applied ? 'var(--color-emphasis)' : 'var(--color-default)',
+                }}
               >
-                <span className="mt-1 size-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="flex items-center gap-2">
-                    <span className="font-medium text-text">{def.name}</span>
-                    {applied && (
-                      <span className="rounded-full border border-gold/60 px-1.5 text-[10px] text-gold">
-                        {def.stacks && applied.rank ? `×${applied.rank}` : 'added'}
-                      </span>
-                    )}
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className="size-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: chipColor(def.category) }}
+                  />
+                  <span className="font-display text-[12px] font-semibold leading-none tracking-[0.5px] text-text">
+                    {def.name}
                   </span>
-                  <span className="line-clamp-2 text-xs text-muted">{def.summary}</span>
                 </span>
-                <Plus className="mt-0.5 size-4 shrink-0 text-muted" />
+                <span className="text-[10px] leading-[1.3] text-muted">{sub}</span>
               </button>
             );
           })}
         </div>
-      </BottomSheet>
+      </Dialog>
 
       {/* ---- Condition tooltip ---- */}
-      <BottomSheet
+      <Dialog
         open={tooltipId !== null}
         onClose={() => setTooltipId(null)}
-        title={tooltipDef?.name ?? 'Condition'}
+        widthClass="max-w-[420px]"
+        title={
+          tooltipDef ? (
+            <span style={{ color: chipColor(tooltipDef.category) }}>{tooltipDef.name}</span>
+          ) : (
+            'Condition'
+          )
+        }
       >
         {tooltipDef ? (
-          <div className="flex flex-col gap-3 pb-2">
+          <div className="flex flex-col gap-3">
             <span
-              className="inline-flex w-fit items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs uppercase tracking-wide"
-              style={{ borderColor: conditionColor(tooltipDef.category), color: conditionColor(tooltipDef.category) }}
+              className="inline-flex w-fit items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[1px]"
+              style={{ borderColor: chipColor(tooltipDef.category), color: chipColor(tooltipDef.category) }}
             >
               {tooltipDef.category}
               {tooltipDef.stacks ? ' · stacks' : ''}
@@ -547,32 +581,76 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
             <p className="text-sm leading-relaxed text-text-2">{tooltipDef.summary}</p>
           </div>
         ) : (
-          <p className="pb-2 text-sm text-muted">No details for &ldquo;{tooltipId}&rdquo;.</p>
+          <p className="text-sm text-muted">No details for &ldquo;{tooltipId}&rdquo;.</p>
         )}
-      </BottomSheet>
+      </Dialog>
 
       {/* ---- Add-mob dialog ---- */}
       <AddMobDialog open={addOpen} onClose={() => setAddOpen(false)} onSubmit={submitAddMobs} />
 
-      {/* ---- Confirms ---- */}
-      <ConfirmDialog
-        open={confirm === 'round'}
-        onClose={() => setConfirm(null)}
-        title="Next round"
-        body="Advance to the next round and reset every hero's (and mob's) Acted flag?"
-        confirmLabel="Next round"
-        onConfirm={doNextRound}
-      />
-      <ConfirmDialog
-        open={confirm === 'end'}
-        onClose={() => setConfirm(null)}
-        title="End session"
-        body="End this session for everyone? Players will drop off and the join code stops working."
-        confirmLabel="End session"
-        danger
-        onConfirm={confirmEnd}
-      />
+      {/* ---- End-session confirm ---- */}
+      <EndSessionDialog open={confirm === 'end'} onClose={() => setConfirm(null)} onConfirm={confirmEnd} />
+
+      {/* ---- Ended overlay ---- */}
+      {ended && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-6"
+          style={{ background: 'var(--color-bg-player)' }}
+        >
+          <div className="max-w-[420px] text-center">
+            <div className="mb-4 font-display text-[13px] font-bold leading-none tracking-[4px] text-muted">
+              WRATH <span className="text-gold">&amp;</span> GLORY
+            </div>
+            <div className="mb-3 font-display text-[30px] font-bold leading-[1.1] tracking-[1px] text-text">
+              Session ended
+            </div>
+            <div className="mb-[26px] text-sm leading-[1.55] text-muted">
+              The board has been cleared and the join code retired. The exported log is the only
+              record that outlives the session.
+            </div>
+            <button
+              type="button"
+              onClick={onEnded}
+              className="rounded bg-gold px-[22px] py-3.5 font-display text-[12px] font-bold leading-none tracking-[1.5px] text-on-gold transition-colors hover:bg-gold-hi"
+            >
+              ▸ START A NEW SESSION
+            </button>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Header freshness
+// ---------------------------------------------------------------------------
+
+function FreshnessBadge({ freshness, chapterName }: { freshness: Freshness; chapterName?: string }) {
+  const { secondsAgo, updatedAt, error } = freshness;
+  const { color, label } = error
+    ? { color: 'var(--color-wounds)', label: 'CONNECTION LOST' }
+    : updatedAt === null
+      ? { color: 'var(--color-minor)', label: 'CONNECTING…' }
+      : {
+          color:
+            secondsAgo <= 6
+              ? 'var(--color-status-active)'
+              : secondsAgo <= 15
+                ? 'var(--color-minor)'
+                : 'var(--color-gravely)',
+          label: `SYNCED ${secondsAgo}s`,
+        };
+
+  return (
+    <span className="inline-flex items-center gap-1.5 font-body text-[9px] font-semibold leading-none tracking-[1px] text-muted">
+      <span
+        className={cn('size-2 rounded-full', updatedAt === null && !error && 'animate-pulse')}
+        style={{ background: color, boxShadow: `0 0 8px ${color}` }}
+        aria-hidden
+      />
+      {chapterName ? `${chapterName} · ${label}` : label}
+    </span>
   );
 }
 
@@ -580,65 +658,203 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
 // Counters
 // ---------------------------------------------------------------------------
 
-function CounterCard({
-  label,
-  value,
-  color,
-  onDelta,
-  onSet,
-  children,
+function RoundControlCard({
+  round,
+  actedCount,
+  activeCount,
+  confirming,
+  onAsk,
+  onConfirm,
+  onCancel,
 }: {
-  label: string;
-  value: number;
-  color: string;
-  onDelta: (d: number) => void;
-  onSet: (v: number) => void;
-  children?: ReactNode;
+  round: number;
+  actedCount: number;
+  activeCount: number;
+  confirming: boolean;
+  onAsk: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
 }) {
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-3 p-4">
-        <div className="flex min-h-7 items-center justify-between gap-2">
-          <span className="text-xs uppercase tracking-[0.16em] text-muted">{label}</span>
-          {children}
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <StepBtn label={`Decrease ${label}`} onClick={() => onDelta(-1)} disabled={value <= 0}>
-            <Minus />
-          </StepBtn>
-          <div className="flex-1 text-center">
-            <EditableNumber
-              value={value}
-              onCommit={onSet}
-              ariaLabel={`Set ${label}`}
-              color={color}
-              className="font-display text-4xl font-bold leading-none"
-            />
+    <div className="flex flex-col rounded-md border border-default bg-panel px-[17px] py-[15px]">
+      <div className="mb-2.5 font-display text-[10px] font-semibold leading-none tracking-[3px] text-muted">
+        <span className="text-gold">◆</span> ROUND CONTROL
+      </div>
+      <div className="flex flex-wrap items-baseline gap-3">
+        <span className="whitespace-nowrap font-display text-[34px] font-bold leading-none text-text">
+          ROUND {round}
+        </span>
+        <span className="font-body text-xs font-medium italic leading-none text-muted">
+          {actedCount} of {activeCount} acted
+        </span>
+      </div>
+      <div className="mt-3.5">
+        {confirming ? (
+          <div className="flex flex-wrap items-center gap-[9px]">
+            <span className="text-[11px] leading-[1.3] text-text-2">
+              Reset every hero&apos;s <b className="text-text">Acted</b> flag?
+            </span>
+            <button
+              type="button"
+              onClick={onConfirm}
+              className="rounded-[3px] bg-gold px-[13px] py-[9px] font-display text-[10px] font-bold leading-none tracking-[1px] text-on-gold transition-colors hover:bg-gold-hi"
+            >
+              CONFIRM
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded-[3px] border border-default bg-transparent px-[13px] py-[9px] font-display text-[10px] font-semibold leading-none tracking-[1px] text-muted transition-colors hover:border-emphasis hover:text-text"
+            >
+              CANCEL
+            </button>
           </div>
-          <StepBtn label={`Increase ${label}`} onClick={() => onDelta(1)}>
-            <Plus />
-          </StepBtn>
-        </div>
-      </CardContent>
-    </Card>
+        ) : (
+          <button
+            type="button"
+            onClick={onAsk}
+            className="rounded bg-gold px-[18px] py-3 font-display text-[12px] font-bold leading-none tracking-[1.5px] text-on-gold transition-colors hover:bg-gold-hi"
+          >
+            ▸ NEXT ROUND
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
-function RoundCard({ round, onNext }: { round: number; onNext: () => void }) {
+function CounterCard({
+  label,
+  note,
+  value,
+  color,
+  glow,
+  theme,
+  labelColor,
+  hint,
+  headerAction,
+  onDelta,
+  onSet,
+}: {
+  label: string;
+  note?: string;
+  value: number;
+  color: string;
+  glow: string;
+  theme: 'gold' | 'ruin';
+  labelColor?: string;
+  hint?: string;
+  headerAction?: ReactNode;
+  onDelta: (d: number) => void;
+  onSet: (v: number) => void;
+}) {
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-3 p-4">
-        <span className="min-h-7 text-xs uppercase tracking-[0.16em] text-muted">Round</span>
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-display text-4xl font-bold leading-none tabular-nums text-gold">
-            {round}
-          </span>
-          <Button onClick={onNext}>
-            <ChevronsRight /> Next round
-          </Button>
+    <div className="rounded-md border border-default bg-panel px-[17px] py-[15px]">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span
+          className="font-display text-[11px] font-semibold leading-none tracking-[2px]"
+          style={{ color: labelColor ?? 'var(--color-gold)' }}
+        >
+          {label}
+        </span>
+        {headerAction ??
+          (note ? (
+            <span className="font-body text-[9px] font-medium italic leading-none text-muted">{note}</span>
+          ) : null)}
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <EditableNumber
+          value={value}
+          onCommit={onSet}
+          ariaLabel={`Set ${label}`}
+          color={color}
+          glow={glow}
+          viewClassName="cursor-pointer font-display text-[52px] font-bold leading-none tabular-nums transition-opacity hover:opacity-80"
+          inputClassName="w-[92px] rounded border border-emphasis bg-bg py-1 text-center font-display text-[40px] font-bold leading-none tabular-nums outline-none"
+        />
+        <div className="flex flex-col gap-[7px]">
+          <CounterStep sign="+" theme={theme} onClick={() => onDelta(1)} />
+          <CounterStep sign="−" theme={theme} onClick={() => onDelta(-1)} disabled={value <= 0} />
         </div>
-      </CardContent>
-    </Card>
+      </div>
+      {hint && (
+        <div className="mt-2 font-body text-[8px] font-medium leading-none tracking-[0.5px] text-faint">
+          {hint}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CounterStep({
+  sign,
+  theme,
+  onClick,
+  disabled,
+}: {
+  sign: '+' | '−';
+  theme: 'gold' | 'ruin';
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  const solid = sign === '+';
+  const base =
+    'grid h-[34px] w-11 place-items-center rounded-[3px] font-display text-[17px] font-bold leading-none transition-colors disabled:opacity-40';
+  if (solid && theme === 'gold') {
+    return (
+      <button type="button" onClick={onClick} disabled={disabled} className={cn(base, 'bg-gold text-on-gold hover:enabled:bg-gold-hi')}>
+        {sign}
+      </button>
+    );
+  }
+  if (solid && theme === 'ruin') {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className={cn(base, 'border text-text hover:enabled:border-violet')}
+        style={{ background: '#2a2140', borderColor: '#4a3d6e' }}
+      >
+        {sign}
+      </button>
+    );
+  }
+  // ghost minus (both themes)
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        base,
+        'border border-emphasis bg-transparent text-text-2',
+        theme === 'ruin' ? 'hover:enabled:border-violet hover:enabled:text-text' : 'hover:enabled:border-gold hover:enabled:text-text',
+      )}
+    >
+      {sign}
+    </button>
+  );
+}
+
+function RuinToggle({ shown, onToggle }: { shown: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="rounded-[3px] border px-[7px] py-[5px] font-display text-[8px] font-semibold leading-none tracking-[1px] transition-colors"
+      style={
+        shown
+          ? {
+              color: 'var(--color-violet)',
+              background: alpha('var(--color-violet)', 14),
+              borderColor: alpha('var(--color-violet)', 45),
+            }
+          : { color: 'var(--color-muted)', background: 'transparent', borderColor: 'var(--color-default)' }
+      }
+    >
+      {shown ? '👁 SHOWN' : 'HIDDEN'}
+    </button>
   );
 }
 
@@ -648,13 +864,17 @@ function EditableNumber({
   onCommit,
   ariaLabel,
   color,
-  className,
+  glow,
+  viewClassName,
+  inputClassName,
 }: {
   value: number;
   onCommit: (v: number) => void;
   ariaLabel: string;
   color?: string;
-  className?: string;
+  glow?: string;
+  viewClassName?: string;
+  inputClassName?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -668,8 +888,8 @@ function EditableNumber({
           setDraft(String(value));
           setEditing(true);
         }}
-        className={cn('tabular-nums transition-colors hover:opacity-80', className)}
-        style={color ? { color } : undefined}
+        className={viewClassName}
+        style={{ color, textShadow: glow }}
       >
         {value}
       </button>
@@ -696,17 +916,14 @@ function EditableNumber({
         else if (e.key === 'Escape') setEditing(false);
       }}
       aria-label={ariaLabel}
-      className={cn(
-        'w-24 rounded-md border border-emphasis bg-raised px-2 text-center tabular-nums outline-none',
-        className,
-      )}
-      style={color ? { color } : undefined}
+      className={inputClassName}
+      style={{ color }}
     />
   );
 }
 
 // ---------------------------------------------------------------------------
-// Party
+// Party roster
 // ---------------------------------------------------------------------------
 
 interface PlayerActions {
@@ -721,91 +938,161 @@ interface PlayerActions {
   onTapCondition: (id: string) => void;
 }
 
-function PartyPanel({ players, actions }: { players: Player[]; actions: PlayerActions }) {
+function PartyRoster({ players, actions }: { players: Player[]; actions: PlayerActions }) {
   return (
-    <Card>
-      <CardHeader className="p-4 pb-2">
-        <CardTitle>
-          Party <span className="text-muted">({players.length})</span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2.5 p-4 pt-2">
-        {players.length === 0 ? (
-          <p className="text-sm text-muted">No heroes admitted yet.</p>
-        ) : (
-          players.map((p) => <PlayerRow key={p.id} p={p} actions={actions} />)
-        )}
-      </CardContent>
-    </Card>
+    <section>
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <span className="font-display text-[11px] font-semibold leading-none tracking-[3px] text-muted">
+          <span className="text-gold">◆</span> PARTY ROSTER
+        </span>
+        <span className="font-body text-[11px] font-medium italic leading-none text-muted">
+          {players.length} {players.length === 1 ? 'hero' : 'heroes'} · you override any hero
+        </span>
+      </div>
+      {players.length === 0 ? (
+        <p className="font-body text-[13px] italic text-faint">No heroes admitted yet.</p>
+      ) : (
+        <div
+          className="grid gap-3"
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 332px), 1fr))' }}
+        >
+          {players.map((p) => (
+            <PlayerCard key={p.id} p={p} actions={actions} />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
-function PlayerRow({ p, actions }: { p: Player; actions: PlayerActions }) {
+function PlayerCard({ p, actions }: { p: Player; actions: PlayerActions }) {
+  const dead = p.status === 'dead';
+  const nameColor = dead ? 'var(--color-muted)' : 'var(--color-text)';
+  const woundPct = p.maxWounds > 0 ? Math.round((p.wounds / p.maxWounds) * 100) : 0;
+  const shockPct = p.maxShock > 0 ? Math.round((p.shock / p.maxShock) * 100) : 0;
+
   return (
-    <div className="flex flex-col gap-2.5 rounded-md border border-default bg-raised p-3">
-      <div className="flex items-center justify-between gap-2">
+    <div
+      className="rounded-[5px] border border-default bg-panel px-3.5 py-[13px]"
+      style={{
+        borderLeft: `3px solid ${statusColor(p.status)}`,
+        opacity: dead ? 0.55 : 1,
+      }}
+    >
+      {/* header */}
+      <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="rounded bg-track px-1.5 py-0.5 font-display text-xs font-semibold tabular-nums text-gold">
+          <span className="shrink-0 rounded-[3px] border border-default px-[5px] py-[3px] text-[9px] font-semibold leading-none text-muted">
             P{p.index}
           </span>
-          <span className="truncate font-medium text-text">{p.name}</span>
+          <span
+            className="truncate font-display text-base font-semibold leading-[1.1] tracking-[0.5px]"
+            style={{ color: nameColor, textDecoration: dead ? 'line-through' : 'none' }}
+          >
+            {p.name}
+          </span>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5">
+          {p.status === 'active' && <ActedButton acted={p.actedThisRound} onClick={() => actions.onActed(p)} />}
           <StatusSelect value={p.status} onChange={(s) => actions.onStatus(p, s)} />
-          <RowAction danger label={`Kick ${p.name}`} onClick={() => actions.onKick(p)}>
-            <Trash2 className="size-3.5" />
-          </RowAction>
+          <button
+            type="button"
+            aria-label={`Kick ${p.name}`}
+            title={`Kick ${p.name}`}
+            onClick={() => actions.onKick(p)}
+            className="px-[3px] font-body text-[13px] font-semibold leading-none text-faint transition-colors hover:text-[#ff9498]"
+          >
+            ×
+          </button>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-end gap-x-5 gap-y-2.5">
-        <Metric label="Wounds">
-          <Stepper
-            label="Wounds"
-            value={p.wounds}
-            max={p.maxWounds}
-            onDelta={(d) => actions.onWounds(p, d)}
-            color="var(--color-wounds)"
-          />
-        </Metric>
-        <Metric label="Shock">
-          <Stepper
-            label="Shock"
-            value={p.shock}
-            max={p.maxShock}
-            onDelta={(d) => actions.onShock(p, d)}
-            color="var(--color-shock)"
-          />
-        </Metric>
-        <Metric label="Wrath">
-          <Stepper
-            label="Wrath"
-            value={p.wrath}
-            max={LIMITS.wrath.max}
-            onDelta={(d) => actions.onWrath(p, d)}
-            color="var(--color-wrath)"
-          />
-        </Metric>
-        <Metric label="Turn">
-          <PillToggle
-            on={p.actedThisRound}
-            onToggle={() => actions.onActed(p)}
-            onContent={
-              <>
-                <Check className="size-3.5" /> Acted
-              </>
-            }
-            offContent={<>Not acted</>}
-          />
-        </Metric>
+      {/* wounds */}
+      <StatRow
+        label="WOUNDS"
+        text={`${p.wounds} / ${p.maxWounds}`}
+        color="var(--color-wounds)"
+        pct={woundPct}
+        numWidth="50px"
+        onDec={() => actions.onWounds(p, -1)}
+        onInc={() => actions.onWounds(p, 1)}
+      />
+
+      {/* shock */}
+      <div className="mt-[9px]">
+        <StatRow
+          label="SHOCK"
+          text={`${p.shock} / ${p.maxShock}`}
+          color="var(--color-shock)"
+          pct={shockPct}
+          numWidth="46px"
+          onDec={() => actions.onShock(p, -1)}
+          onInc={() => actions.onShock(p, 1)}
+        />
       </div>
 
-      <CondControls
-        conditions={p.conditions}
-        onAdd={() => actions.onOpenConditions(p)}
-        onRemove={(id) => actions.onRemoveCondition(p, id)}
-        onTap={actions.onTapCondition}
-      />
+      {/* wrath + conditions */}
+      <div className="mt-[13px] flex items-center justify-between gap-2.5">
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-[9px] font-semibold leading-none tracking-[1px] text-muted">WRATH</span>
+          <ValueStepper onDec={() => actions.onWrath(p, -1)} onInc={() => actions.onWrath(p, 1)}>
+            <span
+              className="min-w-[24px] px-2.5 text-center font-display text-sm font-bold leading-none"
+              style={{ color: 'var(--color-wrath)' }}
+            >
+              {p.wrath}
+            </span>
+          </ValueStepper>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-[5px]">
+          {p.conditions.map((c, i) => (
+            <CondChip
+              key={c.id + i}
+              applied={c}
+              onTap={() => actions.onTapCondition(c.id)}
+              onRemove={() => actions.onRemoveCondition(p, c.id)}
+            />
+          ))}
+          <AddCondButton compact onClick={() => actions.onOpenConditions(p)} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatRow({
+  label,
+  text,
+  color,
+  pct,
+  numWidth,
+  onDec,
+  onInc,
+}: {
+  label: string;
+  text: string;
+  color: string;
+  pct: number;
+  numWidth: string;
+  onDec: () => void;
+  onInc: () => void;
+}) {
+  return (
+    <div>
+      <div className="mb-[5px] flex items-center justify-between">
+        <span className="text-[9px] font-semibold leading-none tracking-[1px] text-muted">{label}</span>
+        <ValueStepper onDec={onDec} onInc={onInc}>
+          <span
+            className="px-2 text-center font-display text-[12px] font-semibold leading-none"
+            style={{ color, minWidth: numWidth }}
+          >
+            {text}
+          </span>
+        </ValueStepper>
+      </div>
+      <div className="h-2 overflow-hidden rounded-[2px] border border-default bg-track">
+        <div className="h-full" style={{ width: `${pct}%`, background: color }} />
+      </div>
     </div>
   );
 }
@@ -816,12 +1103,12 @@ function StatusSelect({ value, onChange }: { value: PlayerStatus; onChange: (s: 
       aria-label="Status"
       value={value}
       onChange={(e) => onChange(e.target.value as PlayerStatus)}
-      className="rounded-md border border-strong bg-raised px-2 py-1 text-xs font-medium outline-none focus-visible:border-emphasis"
+      className="rounded-[3px] border border-default bg-raised px-1.5 py-1.5 font-display text-[9px] font-semibold uppercase leading-none tracking-[1px] outline-none"
       style={{ color: statusColor(value) }}
     >
       {STATUSES.map((s) => (
         <option key={s} value={s} className="bg-panel text-text">
-          {statusLabel(s)}
+          {statusLabel(s).toUpperCase()}
         </option>
       ))}
     </select>
@@ -845,114 +1132,161 @@ interface MobActions {
   onTapCondition: (id: string) => void;
 }
 
-function MobPanel({ mobs, actions, onAdd }: { mobs: Mob[]; actions: MobActions; onAdd: () => void }) {
+function MobsPanel({ mobs, actions, onAdd }: { mobs: Mob[]; actions: MobActions; onAdd: () => void }) {
   return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between p-4 pb-2">
-        <CardTitle>
-          Enemies <span className="text-muted">({mobs.length})</span>
-        </CardTitle>
-        <Button size="sm" onClick={onAdd}>
-          <Plus /> Add
-        </Button>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2.5 p-4 pt-2">
-        {mobs.length === 0 ? (
-          <p className="text-sm text-muted">No mobs on the board.</p>
-        ) : (
-          mobs.map((m) => <MobRow key={m.id} m={m} actions={actions} />)
-        )}
-      </CardContent>
-    </Card>
+    <Panel
+      title="MOBS"
+      meta={`${mobs.length} on board`}
+      action={
+        <button
+          type="button"
+          onClick={onAdd}
+          className="rounded-[3px] border border-strong bg-transparent px-[9px] py-1.5 font-display text-[9px] font-semibold leading-none tracking-[1px] text-gold transition-colors hover:border-gold"
+        >
+          + ADD
+        </button>
+      }
+    >
+      {mobs.length === 0 ? (
+        <p className="font-body text-[12px] italic text-faint">No mobs on the board.</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {mobs.map((m) => (
+            <MobRow key={m.id} m={m} actions={actions} />
+          ))}
+        </div>
+      )}
+    </Panel>
   );
 }
 
 function MobRow({ m, actions }: { m: Mob; actions: MobActions }) {
   const c = coarse(m.hp, m.maxHp);
-  const Icon = COARSE_ICON[c];
   const color = coarseColor(c);
+  const dead = c === 'dead';
+  const hidden = !m.revealed;
 
   return (
-    <div className={cn('flex flex-col gap-2.5 rounded-md border bg-raised p-3', m.revealed ? 'border-default' : 'border-dashed border-strong')}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <InlineName name={m.label} onCommit={(v) => actions.onRename(m, v)} />
-          {!m.revealed && (
-            <span className="shrink-0 rounded-full border border-strong px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">
-              Hidden
-            </span>
-          )}
-        </div>
-        <span className="shrink-0 text-[11px] uppercase tracking-wide text-faint">{m.tier}</span>
-      </div>
-
-      <div className="flex flex-wrap items-end gap-x-5 gap-y-2.5">
-        <Metric label="HP">
-          <div className="flex items-center gap-2">
+    <div
+      className="rounded-[4px] px-[11px] py-2.5"
+      style={{
+        background: hidden ? '#120f09' : 'var(--color-panel)',
+        border: hidden ? '1px dashed var(--color-strong)' : '1px solid var(--color-default)',
+        borderLeft: `3px solid ${color}`,
+        opacity: dead ? 0.62 : 1,
+      }}
+    >
+      {/* identity + hp stepper */}
+      <div className="flex items-center gap-[9px]">
+        <span className="inline-flex shrink-0">
+          <CoarseIcon coarse={c} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <InlineName name={m.label} dead={dead} onCommit={(v) => actions.onRename(m, v)} />
             <span
-              className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium"
-              style={{ borderColor: color, color }}
+              className="shrink-0 rounded-[2px] border px-1 py-0.5 font-display text-[8px] font-semibold leading-none tracking-[1px]"
+              style={{ color: tierColor(m.tier), borderColor: alpha(tierColor(m.tier), 33) }}
             >
-              <Icon className="size-3.5" aria-hidden />
+              {m.tier}
+            </span>
+            {hidden && (
+              <span className="shrink-0 rounded-[2px] border border-dashed border-strong px-[5px] py-0.5 font-display text-[8px] font-semibold leading-none tracking-[1px] text-muted">
+                HIDDEN
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex items-center gap-2">
+            <span
+              className="font-display text-[9px] font-semibold uppercase leading-none tracking-[1px]"
+              style={{ color }}
+            >
               {coarseLabel(c)}
             </span>
-            <Stepper label="HP" value={m.hp} max={m.maxHp} onDelta={(d) => actions.onHp(m, d)} color={color} />
+            <span className="font-body text-[10px] font-semibold leading-none text-faint">
+              {m.hp} / {m.maxHp} HP
+            </span>
           </div>
-        </Metric>
-        <Metric label="Turn">
-          <PillToggle
-            on={m.actedThisRound}
-            onToggle={() => actions.onActed(m)}
-            onContent={
-              <>
-                <Check className="size-3.5" /> Acted
-              </>
-            }
-            offContent={<>Not acted</>}
-          />
-        </Metric>
-        <Metric label="Visibility">
-          <PillToggle
-            on={m.revealed}
-            onToggle={() => actions.onReveal(m)}
-            onContent={
-              <>
-                <Eye className="size-3.5" /> Shown
-              </>
-            }
-            offContent={
-              <>
-                <EyeOff className="size-3.5" /> Hidden
-              </>
-            }
-          />
-        </Metric>
+        </div>
+        <div className="inline-flex shrink-0 items-center overflow-hidden rounded-[3px] border border-default">
+          <button
+            type="button"
+            aria-label="Decrease HP"
+            onClick={() => actions.onHp(m, -1)}
+            className="bg-raised px-2 py-1 font-display text-[12px] font-semibold leading-none text-text-2 transition-colors hover:text-text"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            aria-label="Increase HP"
+            onClick={() => actions.onHp(m, 1)}
+            className="border-l border-default bg-raised px-2 py-1 font-display text-[12px] font-semibold leading-none text-text-2 transition-colors hover:text-text"
+          >
+            +
+          </button>
+        </div>
       </div>
 
-      <CondControls
-        conditions={m.conditions}
-        onAdd={() => actions.onOpenConditions(m)}
-        onRemove={(id) => actions.onRemoveCondition(m, id)}
-        onTap={actions.onTapCondition}
-      />
+      {/* action row */}
+      <div className="mt-[9px] flex flex-wrap items-center gap-1.5">
+        {!dead && <ActedButton acted={m.actedThisRound} onClick={() => actions.onActed(m)} />}
+        <button
+          type="button"
+          onClick={() => actions.onReveal(m)}
+          className="rounded-[3px] px-[9px] py-1.5 font-display text-[9px] font-semibold leading-none tracking-[0.5px] transition-colors"
+          style={
+            m.revealed
+              ? { color: 'var(--color-muted)', background: 'transparent', border: '1px solid var(--color-default)' }
+              : { color: 'var(--color-on-gold)', background: 'var(--color-gold)', border: 'none' }
+          }
+        >
+          {m.revealed ? 'HIDE' : 'REVEAL'}
+        </button>
+        <button
+          type="button"
+          onClick={() => actions.onDuplicate(m)}
+          className="rounded-[3px] border border-default bg-transparent px-[9px] py-1.5 font-display text-[9px] font-semibold leading-none tracking-[0.5px] text-muted transition-colors hover:border-emphasis hover:text-text"
+        >
+          DUPLICATE
+        </button>
+        <button
+          type="button"
+          onClick={() => actions.onKill(m)}
+          className="rounded-[3px] border border-default bg-transparent px-[9px] py-1.5 font-display text-[9px] font-semibold leading-none tracking-[0.5px] text-muted transition-colors hover:border-wounds hover:text-[#ff9498]"
+        >
+          KILL
+        </button>
+        <button
+          type="button"
+          aria-label={`Remove ${m.label}`}
+          title="Remove"
+          onClick={() => actions.onDelete(m)}
+          className="ml-auto px-[5px] py-0.5 font-body text-[12px] font-semibold leading-none text-faint transition-colors hover:text-[#ff9498]"
+        >
+          ×
+        </button>
+      </div>
 
-      <div className="flex items-center gap-2">
-        <RowAction label={`Duplicate ${m.label}`} onClick={() => actions.onDuplicate(m)}>
-          <Copy className="size-3.5" /> Duplicate
-        </RowAction>
-        <RowAction label={`Kill ${m.label}`} onClick={() => actions.onKill(m)}>
-          <Skull className="size-3.5" /> Kill
-        </RowAction>
-        <RowAction danger label={`Remove ${m.label}`} onClick={() => actions.onDelete(m)} className="ml-auto">
-          <Trash2 className="size-3.5" /> Remove
-        </RowAction>
+      {/* conditions */}
+      <div className="mt-2 flex flex-wrap items-center gap-[5px]">
+        {m.conditions.map((c2, i) => (
+          <CondChip
+            key={c2.id + i}
+            applied={c2}
+            size="sm"
+            onTap={() => actions.onTapCondition(c2.id)}
+            onRemove={() => actions.onRemoveCondition(m, c2.id)}
+          />
+        ))}
+        <AddCondButton onClick={() => actions.onOpenConditions(m)} />
       </div>
     </div>
   );
 }
 
 /** Inline rename: click the label to edit; Enter/blur commits, Esc cancels. */
-function InlineName({ name, onCommit }: { name: string; onCommit: (v: string) => void }) {
+function InlineName({ name, dead, onCommit }: { name: string; dead: boolean; onCommit: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
 
@@ -960,12 +1294,13 @@ function InlineName({ name, onCommit }: { name: string; onCommit: (v: string) =>
     return (
       <button
         type="button"
-        title="Rename"
+        title="Click to rename"
         onClick={() => {
           setDraft(name);
           setEditing(true);
         }}
-        className="min-w-0 truncate text-left font-medium text-text transition-colors hover:text-gold"
+        className="min-w-0 truncate text-left text-[13px] font-semibold leading-[1.1] transition-colors hover:text-gold"
+        style={{ color: dead ? 'var(--color-muted)' : 'var(--color-text)', textDecoration: dead ? 'line-through' : 'none' }}
       >
         {name}
       </button>
@@ -991,54 +1326,44 @@ function InlineName({ name, onCommit }: { name: string; onCommit: (v: string) =>
         else if (e.key === 'Escape') setEditing(false);
       }}
       aria-label="Rename mob"
-      className="min-w-0 rounded-md border border-emphasis bg-raised px-2 py-0.5 font-medium text-text outline-none"
+      className="w-[150px] max-w-full rounded-[3px] border border-emphasis bg-bg px-1.5 py-[3px] text-[13px] font-semibold leading-[1.1] text-text outline-none"
     />
   );
 }
 
-// ---------------------------------------------------------------------------
-// Lobby
-// ---------------------------------------------------------------------------
-
-function LobbyPanel({
-  lobby,
-  onAdmit,
-  onIgnore,
-}: {
-  lobby: Player[];
-  onAdmit: (p: Player) => void;
-  onIgnore: (p: Player) => void;
-}) {
+function CoarseIcon({ coarse }: { coarse: CoarseHp }) {
+  const color = coarseColor(coarse);
+  const svg = { flexShrink: 0, color } as const;
+  if (coarse === 'healthy') {
+    return (
+      <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden style={svg}>
+        <circle cx="8" cy="8" r="6" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (coarse === 'minor') {
+    return (
+      <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden style={svg}>
+        <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M8 2.5 A5.5 5.5 0 0 1 8 13.5 Z" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (coarse === 'gravely') {
+    return (
+      <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden style={svg}>
+        <path d="M8 2.2 L14.4 13.2 H1.6 Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        <line x1="8" y1="6.2" x2="8" y2="9.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="8" cy="11.4" r="0.9" fill="currentColor" />
+      </svg>
+    );
+  }
   return (
-    <Card>
-      <CardHeader className="p-4 pb-2">
-        <CardTitle>
-          Lobby <span className="text-muted">({lobby.length})</span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2 p-4 pt-2">
-        {lobby.length === 0 ? (
-          <p className="text-sm text-muted">No one waiting to be admitted.</p>
-        ) : (
-          lobby.map((p) => (
-            <div
-              key={p.id}
-              className="flex items-center justify-between gap-2 rounded-md border border-default bg-raised px-3 py-2"
-            >
-              <span className="truncate text-text">{p.name}</span>
-              <div className="flex shrink-0 items-center gap-2">
-                <RowAction label={`Admit ${p.name}`} onClick={() => onAdmit(p)}>
-                  <UserPlus className="size-3.5" /> Admit
-                </RowAction>
-                <RowAction danger label={`Ignore ${p.name}`} onClick={() => onIgnore(p)}>
-                  <X className="size-3.5" /> Ignore
-                </RowAction>
-              </div>
-            </div>
-          ))
-        )}
-      </CardContent>
-    </Card>
+    <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden style={svg}>
+      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <line x1="5.6" y1="5.6" x2="10.4" y2="10.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="10.4" y1="5.6" x2="5.6" y2="10.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
   );
 }
 
@@ -1056,37 +1381,94 @@ function LogPanel({
   onExport: () => void;
 }) {
   return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between p-4 pb-2">
-        <CardTitle className="flex items-center gap-2">
-          <ScrollText className="size-4 text-muted" /> Activity log
-        </CardTitle>
-        <Button variant="outline" size="sm" onClick={onExport} disabled={log.length === 0}>
-          <Download /> Export
-        </Button>
-      </CardHeader>
-      <CardContent className="p-4 pt-2">
-        {log.length === 0 ? (
-          <p className="text-sm text-muted">No activity yet.</p>
-        ) : (
-          <ul className="flex max-h-96 flex-col gap-1.5 overflow-y-auto pr-1">
-            {log
-              .map((e) => decodeLog(e))
-              .map((v, i) => ({ v, key: i }))
-              .reverse()
-              .map(({ v, key }) => (
-                <li
-                  key={key}
-                  className="flex items-baseline justify-between gap-3 rounded-md border border-default bg-raised px-3 py-2"
+    <Panel
+      title="ACTIVITY LOG"
+      action={
+        <button
+          type="button"
+          onClick={onExport}
+          disabled={log.length === 0}
+          className="rounded-[3px] border border-strong bg-transparent px-[9px] py-1.5 font-display text-[9px] font-semibold leading-none tracking-[1px] text-muted transition-colors hover:border-gold hover:text-gold disabled:opacity-40"
+        >
+          ↓ EXPORT
+        </button>
+      }
+    >
+      {log.length === 0 ? (
+        <p className="font-body text-[12px] italic text-faint">No activity yet.</p>
+      ) : (
+        <div className="flex max-h-[220px] flex-col gap-0.5 overflow-y-auto">
+          {log
+            .map((e) => decodeLog(e))
+            .map((v, i) => ({ v, key: i }))
+            .reverse()
+            .map(({ v, key }) => (
+              <div key={key} className="flex items-center gap-[9px] border-b border-[#241d12] px-1 py-[7px]">
+                <span
+                  className="size-[7px] shrink-0 rounded-full"
+                  style={{ background: v.type === 'G' ? 'var(--color-gold)' : 'var(--color-violet)' }}
+                />
+                <span className="flex-1 font-body text-[12px] leading-[1.35] text-text-2">
+                  {formatLog(v, nameByIndex)}
+                </span>
+                <span className="shrink-0 font-body text-[10px] font-medium italic leading-none tabular-nums text-faint">
+                  {fmtTime(v.ts)}
+                </span>
+              </div>
+            ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Lobby
+// ---------------------------------------------------------------------------
+
+function LobbyPanel({
+  lobby,
+  onAdmit,
+  onIgnore,
+}: {
+  lobby: Player[];
+  onAdmit: (p: Player) => void;
+  onIgnore: (p: Player) => void;
+}) {
+  return (
+    <Panel title="LOBBY" meta={lobby.length === 0 ? 'nobody waiting' : `${lobby.length} waiting`}>
+      {lobby.length === 0 ? (
+        <p className="font-body text-[12px] italic text-faint">No one waiting to be admitted.</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {lobby.map((p) => (
+            <div
+              key={p.id}
+              className="flex items-center justify-between gap-2 rounded-[4px] border border-default bg-raised px-[11px] py-[9px]"
+            >
+              <span className="truncate font-body text-[13px] font-semibold leading-none text-text">{p.name}</span>
+              <div className="flex shrink-0 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onAdmit(p)}
+                  className="rounded-[3px] px-[11px] py-[7px] font-display text-[9px] font-bold leading-none tracking-[0.5px]"
+                  style={{ background: 'var(--color-status-active)', color: 'var(--color-on-gold)' }}
                 >
-                  <span className="text-sm text-text-2">{formatLog(v, nameByIndex)}</span>
-                  <span className="shrink-0 text-[11px] tabular-nums text-faint">{fmtTime(v.ts)}</span>
-                </li>
-              ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+                  ADMIT
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onIgnore(p)}
+                  className="rounded-[3px] border border-default bg-transparent px-[11px] py-[7px] font-display text-[9px] font-semibold leading-none tracking-[0.5px] text-muted transition-colors hover:border-wounds hover:text-[#ff9498]"
+                >
+                  IGNORE
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -1140,118 +1522,171 @@ function AddMobDialog({
     }
   };
 
+  const stepClass =
+    'grid h-8 w-[34px] shrink-0 place-items-center rounded-[3px] border border-default bg-raised font-display text-base font-semibold leading-none text-text-2 transition-colors hover:enabled:text-text disabled:opacity-40';
+
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      title="Add mobs"
+      widthClass="max-w-[440px]"
+      title={
+        <span className="flex flex-col gap-1">
+          <span>Add mobs to the board</span>
+          <span className="font-body text-[11px] font-normal italic tracking-normal text-muted">
+            Drop in a single foe or a whole pack
+          </span>
+        </span>
+      }
       footer={
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button onClick={submit} disabled={busy}>
-            {busy ? 'Adding…' : count > 1 ? `Add ${count}` : 'Add'}
-          </Button>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded border border-default bg-transparent px-4 py-2.5 font-display text-[11px] font-semibold leading-none tracking-[0.5px] text-muted transition-colors hover:border-emphasis hover:text-text disabled:opacity-50"
+          >
+            CANCEL
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy}
+            className="rounded bg-gold px-[18px] py-2.5 font-display text-[11px] font-bold leading-none tracking-[1px] text-on-gold transition-colors hover:bg-gold-hi disabled:opacity-50"
+          >
+            {busy ? 'Adding…' : count > 1 ? `▸ ADD ${count} MOBS` : '▸ ADD TO BOARD'}
+          </button>
         </div>
       }
     >
       <div className="flex flex-col gap-4">
-        <Field label="Name">
-          <Input
+        <label className="flex flex-col gap-[7px]">
+          <FieldLabel>NAME</FieldLabel>
+          <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             maxLength={MOB_LABEL_MAX}
-            placeholder={DEFAULTS.mob.label}
+            autoFocus
+            placeholder="e.g. Grotesk Blob"
+            className="rounded border border-default bg-bg px-3 py-2.5 text-sm text-text outline-none placeholder:text-faint focus-visible:border-emphasis"
           />
-        </Field>
+          <span className="font-body text-[10px] italic leading-[1.35] text-faint">
+            Use a description if the party hasn&apos;t identified it yet — rename it later.
+          </span>
+        </label>
 
-        <Field label="Tier">
-          <div className="grid grid-cols-3 gap-2">
+        <div className="flex flex-col gap-[7px]">
+          <FieldLabel>TIER</FieldLabel>
+          <div className="flex gap-2">
             {TIERS.map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setTier(t)}
                 className={cn(
-                  'rounded-md border py-2 text-sm font-medium transition-colors',
+                  'flex-1 rounded border px-1.5 py-[9px] font-display text-[10px] font-semibold leading-none tracking-[1px] transition-colors',
                   tier === t
-                    ? 'border-gold bg-gold/15 text-gold'
-                    : 'border-strong bg-raised text-text-2 hover:border-emphasis hover:text-text',
+                    ? 'border-gold bg-gold text-on-gold'
+                    : 'border-default bg-transparent text-muted hover:border-emphasis hover:text-text',
                 )}
               >
-                {t}
+                {t.toUpperCase()}
               </button>
             ))}
           </div>
-        </Field>
+        </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Max HP">
-            <div className="flex items-center gap-2">
-              <StepBtn
-                label="Decrease max HP"
+        <div className="flex gap-3.5">
+          <div className="flex min-w-0 flex-1 flex-col gap-[7px]">
+            <FieldLabel>MAX HP</FieldLabel>
+            <div className="flex items-center gap-1.5 rounded border border-default bg-bg p-1">
+              <button
+                type="button"
+                aria-label="Decrease max HP"
                 onClick={() => setMaxHp((v) => Math.max(LIMITS.mobMaxHp.min, v - 1))}
                 disabled={maxHp <= LIMITS.mobMaxHp.min}
+                className={stepClass}
               >
-                <Minus />
-              </StepBtn>
-              <Input
+                −
+              </button>
+              <input
                 type="number"
                 inputMode="numeric"
                 min={LIMITS.mobMaxHp.min}
                 value={maxHp}
                 onChange={(e) =>
-                  setMaxHp(Math.max(LIMITS.mobMaxHp.min, Number.parseInt(e.target.value, 10) || LIMITS.mobMaxHp.min))
+                  setMaxHp(
+                    Math.max(LIMITS.mobMaxHp.min, Number.parseInt(e.target.value, 10) || LIMITS.mobMaxHp.min),
+                  )
                 }
-                className="text-center tabular-nums"
+                className="min-w-0 flex-1 bg-transparent text-center font-display text-[17px] font-bold leading-none text-text outline-none"
               />
-              <StepBtn label="Increase max HP" onClick={() => setMaxHp((v) => v + 1)}>
-                <Plus />
-              </StepBtn>
+              <button
+                type="button"
+                aria-label="Increase max HP"
+                onClick={() => setMaxHp((v) => v + 1)}
+                className={stepClass}
+              >
+                +
+              </button>
             </div>
-          </Field>
+          </div>
 
-          <Field label="How many">
-            <div className="flex items-center gap-2">
-              <StepBtn
-                label="Fewer"
+          <div className="flex min-w-0 flex-1 flex-col gap-[7px]">
+            <FieldLabel>HOW MANY?</FieldLabel>
+            <div className="flex items-center gap-1.5 rounded border border-default bg-bg p-1">
+              <button
+                type="button"
+                aria-label="Fewer"
                 onClick={() => setCount((v) => Math.max(LIMITS.addMobCount.min, v - 1))}
                 disabled={count <= LIMITS.addMobCount.min}
+                className={stepClass}
               >
-                <Minus />
-              </StepBtn>
-              <span className="min-w-10 text-center font-display text-xl font-bold tabular-nums text-text">
+                −
+              </button>
+              <span className="min-w-0 flex-1 text-center font-display text-[17px] font-bold leading-none text-text">
                 {count}
               </span>
-              <StepBtn
-                label="More"
+              <button
+                type="button"
+                aria-label="More"
                 onClick={() => setCount((v) => Math.min(LIMITS.addMobCount.max, v + 1))}
                 disabled={count >= LIMITS.addMobCount.max}
+                className={stepClass}
               >
-                <Plus />
-              </StepBtn>
+                +
+              </button>
             </div>
-          </Field>
+          </div>
         </div>
 
-        <div className="flex items-center justify-between rounded-md border border-default bg-raised px-3 py-2.5">
-          <span className="text-sm text-text-2">Starts hidden from players</span>
-          <PillToggle
-            on={startsHidden}
-            onToggle={() => setStartsHidden((v) => !v)}
-            onContent={
-              <>
-                <EyeOff className="size-3.5" /> Hidden
-              </>
-            }
-            offContent={
-              <>
-                <Eye className="size-3.5" /> Shown
-              </>
-            }
-          />
-        </div>
+        <button
+          type="button"
+          onClick={() => setStartsHidden((v) => !v)}
+          className="flex w-full items-center gap-2.5 rounded border px-3 py-[11px] text-left transition-colors"
+          style={{
+            background: startsHidden ? alpha('var(--color-gold)', 8) : 'var(--color-bg)',
+            borderColor: startsHidden ? 'var(--color-emphasis)' : 'var(--color-default)',
+          }}
+        >
+          <span
+            className="grid size-5 shrink-0 place-items-center rounded-[4px] border"
+            style={{
+              background: startsHidden ? 'var(--color-gold)' : 'transparent',
+              borderColor: startsHidden ? 'var(--color-gold)' : 'var(--color-emphasis)',
+            }}
+          >
+            {startsHidden && (
+              <span className="font-display text-[12px] font-bold leading-none text-on-gold">✓</span>
+            )}
+          </span>
+          <span className="flex flex-col gap-[3px]">
+            <span className="text-[12px] font-semibold leading-none text-text">Starts hidden from players</span>
+            <span className="font-body text-[10px] italic leading-[1.35] text-faint">
+              Only you see it until you reveal it. Recommended.
+            </span>
+          </span>
+        </button>
 
         {error && <p className="text-sm text-wounds">{error}</p>}
       </div>
@@ -1259,35 +1694,26 @@ function AddMobDialog({
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function FieldLabel({ children }: { children: ReactNode }) {
   return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-xs uppercase tracking-wide text-muted">{label}</span>
+    <span className="font-display text-[9px] font-semibold leading-none tracking-[2px] text-muted">
       {children}
-    </label>
+    </span>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Confirm dialog
+// End-session dialog
 // ---------------------------------------------------------------------------
 
-function ConfirmDialog({
+function EndSessionDialog({
   open,
   onClose,
-  title,
-  body,
-  confirmLabel,
-  danger,
   onConfirm,
 }: {
   open: boolean;
   onClose: () => void;
-  title: string;
-  body: string;
-  confirmLabel: string;
-  danger?: boolean;
-  onConfirm: () => void | Promise<void>;
+  onConfirm: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1315,19 +1741,33 @@ function ConfirmDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      title={title}
+      widthClass="max-w-[400px]"
+      title="End this session?"
       footer={
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button variant={danger ? 'destructive' : 'default'} onClick={confirm} disabled={busy}>
-            {busy ? 'Working…' : confirmLabel}
-          </Button>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded border border-default bg-transparent px-4 py-2.5 font-display text-[11px] font-semibold leading-none tracking-[0.5px] text-muted transition-colors hover:border-emphasis hover:text-text disabled:opacity-50"
+          >
+            CANCEL
+          </button>
+          <button
+            type="button"
+            onClick={confirm}
+            disabled={busy}
+            className="rounded bg-[#c02a2f] px-4 py-2.5 font-display text-[11px] font-bold leading-none tracking-[0.5px] text-white transition-colors hover:bg-[#d8353b] disabled:opacity-50"
+          >
+            {busy ? 'Ending…' : 'END SESSION'}
+          </button>
         </div>
       }
     >
-      <p className="text-sm text-text-2">{body}</p>
+      <p className="text-[13px] leading-[1.5] text-text-2">
+        The board clears for every player and the join code stops working. Export the activity log
+        first if you want to keep it.
+      </p>
       {error && <p className="mt-2 text-sm text-wounds">{error}</p>}
     </Dialog>
   );
@@ -1337,197 +1777,152 @@ function ConfirmDialog({
 // Shared primitives
 // ---------------------------------------------------------------------------
 
-function Metric({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[10px] uppercase tracking-wide text-muted">{label}</span>
-      {children}
-    </div>
-  );
-}
-
-function Stepper({
-  label,
-  value,
-  max,
-  min = 0,
-  color,
-  onDelta,
-}: {
-  label: string;
-  value: number;
-  max?: number;
-  min?: number;
-  color?: string;
-  onDelta: (d: number) => void;
-}) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <StepBtn size="sm" label={`Decrease ${label}`} onClick={() => onDelta(-1)} disabled={value <= min}>
-        <Minus />
-      </StepBtn>
-      <span
-        className="min-w-[3.25rem] text-center font-display text-base font-bold tabular-nums"
-        style={color ? { color } : undefined}
-      >
-        {value}
-        {max !== undefined && <span className="text-faint">/{max}</span>}
-      </span>
-      <StepBtn
-        size="sm"
-        label={`Increase ${label}`}
-        onClick={() => onDelta(1)}
-        disabled={max !== undefined && value >= max}
-      >
-        <Plus />
-      </StepBtn>
-    </div>
-  );
-}
-
-function StepBtn({
+function Panel({
+  title,
+  meta,
+  action,
   children,
-  onClick,
-  disabled,
-  label,
-  size = 'md',
 }: {
+  title: string;
+  meta?: string;
+  action?: ReactNode;
   children: ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-  label: string;
-  size?: 'sm' | 'md';
 }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        'grid shrink-0 place-items-center rounded-md border border-strong bg-raised text-text transition-colors hover:enabled:border-emphasis hover:enabled:bg-track disabled:opacity-40',
-        size === 'sm' ? 'size-7 [&_svg]:size-3.5' : 'size-9 [&_svg]:size-4',
-      )}
-    >
+    <section className="rounded-md border border-default bg-panel px-4 py-[15px]">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <span className="font-display text-[10px] font-semibold leading-none tracking-[2px] text-muted">
+          <span className="text-gold">◆</span> {title}
+          {meta && (
+            <span className="ml-1 font-body text-[10px] font-medium italic tracking-normal text-faint">
+              · {meta}
+            </span>
+          )}
+        </span>
+        {action}
+      </div>
       {children}
-    </button>
+    </section>
   );
 }
 
-function PillToggle({
-  on,
-  onToggle,
-  onContent,
-  offContent,
-}: {
-  on: boolean;
-  onToggle: () => void;
-  onContent: ReactNode;
-  offContent: ReactNode;
-}) {
+function ValueStepper({ children, onDec, onInc }: { children: ReactNode; onDec: () => void; onInc: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={cn(
-        'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-        on
-          ? 'border-gold bg-gold/15 text-gold'
-          : 'border-strong bg-raised text-muted hover:border-emphasis hover:text-text',
-      )}
-    >
-      {on ? onContent : offContent}
-    </button>
-  );
-}
-
-function RowAction({
-  children,
-  onClick,
-  label,
-  danger,
-  className,
-}: {
-  children: ReactNode;
-  onClick: () => void;
-  label: string;
-  danger?: boolean;
-  className?: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      className={cn(
-        'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors',
-        danger
-          ? 'border-wounds/40 text-wounds hover:bg-wounds/10'
-          : 'border-strong bg-raised text-text-2 hover:border-emphasis hover:text-text',
-        className,
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-function CondControls({
-  conditions,
-  onAdd,
-  onRemove,
-  onTap,
-}: {
-  conditions: AppliedCondition[];
-  onAdd: () => void;
-  onRemove: (id: string) => void;
-  onTap: (id: string) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {conditions.map((c, i) => (
-        <CondChip key={c.id + i} applied={c} onTap={() => onTap(c.id)} onRemove={() => onRemove(c.id)} />
-      ))}
+    <div className="inline-flex items-center overflow-hidden rounded-[3px] border border-default">
       <button
         type="button"
-        onClick={onAdd}
-        className="inline-flex items-center gap-1 rounded-full border border-strong bg-raised px-2 py-0.5 text-xs text-text-2 transition-colors hover:border-emphasis hover:text-text"
+        aria-label="Decrease"
+        onClick={onDec}
+        className="bg-raised px-[9px] py-[3px] font-display text-[13px] font-semibold leading-none text-text-2 transition-colors hover:text-text"
       >
-        <Plus className="size-3.5" /> Condition
+        −
+      </button>
+      {children}
+      <button
+        type="button"
+        aria-label="Increase"
+        onClick={onInc}
+        className="bg-raised px-[9px] py-[3px] font-display text-[13px] font-semibold leading-none text-text-2 transition-colors hover:text-text"
+      >
+        +
       </button>
     </div>
+  );
+}
+
+function ActedButton({ acted, onClick }: { acted: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'whitespace-nowrap rounded-[3px] border px-2 py-1.5 font-display text-[9px] leading-none tracking-[0.5px]',
+        acted ? 'font-bold' : 'font-semibold',
+      )}
+      style={
+        acted
+          ? {
+              color: 'var(--color-status-active)',
+              background: alpha('var(--color-status-active)', 14),
+              borderColor: alpha('var(--color-status-active)', 45),
+            }
+          : { color: 'var(--color-muted)', background: 'transparent', borderColor: 'var(--color-default)' }
+      }
+    >
+      {acted ? '✓ ACTED' : 'NOT YET'}
+    </button>
+  );
+}
+
+function AddCondButton({ onClick, compact }: { onClick: () => void; compact?: boolean }) {
+  if (compact) {
+    return (
+      <button
+        type="button"
+        title="Add condition"
+        onClick={onClick}
+        className="grid size-6 place-items-center rounded-[3px] border border-dashed border-strong font-display text-[13px] font-semibold leading-none text-muted transition-colors hover:border-gold hover:text-gold"
+      >
+        +
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      title="Add condition"
+      onClick={onClick}
+      className="rounded-[3px] border border-dashed border-strong px-2 py-[5px] font-display text-[10px] font-semibold leading-none tracking-[0.5px] text-muted transition-colors hover:border-gold hover:text-gold"
+    >
+      + COND
+    </button>
   );
 }
 
 function CondChip({
   applied,
+  size,
   onTap,
   onRemove,
 }: {
   applied: AppliedCondition;
+  size?: 'sm';
   onTap: () => void;
   onRemove: () => void;
 }) {
   const def = conditionDef(applied.id);
   const name = def?.name ?? applied.id;
-  const color = def ? conditionColor(def.category) : 'var(--color-muted)';
-  const rank = applied.rank && applied.rank > 1 ? ` ${applied.rank}` : '';
+  const color = def ? chipColor(def.category) : 'var(--color-muted)';
+  const showRank = !!(applied.rank && applied.rank > 1);
+  const sm = size === 'sm';
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full border bg-raised px-2 py-0.5 text-xs"
-      style={{ borderColor: color, color }}
+      className={cn('inline-flex items-center gap-1 rounded-[3px] border font-semibold', sm ? 'text-[9px]' : 'text-[10px]')}
+      style={{
+        color,
+        borderColor: alpha(color, 50),
+        background: alpha(color, 16),
+        padding: sm ? '3px 4px 3px 6px' : '4px 3px 4px 7px',
+      }}
     >
-      <button type="button" onClick={onTap} className="max-w-[9rem] truncate">
+      <button type="button" onClick={onTap} className="max-w-[9rem] truncate leading-none">
         {name}
-        {rank}
       </button>
+      {showRank && (
+        <span
+          className="rounded-[2px] px-1 py-0.5 font-display text-[8px] font-bold leading-none"
+          style={{ background: alpha(color, 30), color }}
+        >
+          {applied.rank}
+        </span>
+      )}
       <button
         type="button"
         aria-label={`Remove ${name}`}
         onClick={onRemove}
-        className="-mr-0.5 grid size-4 place-items-center rounded-full hover:bg-white/10"
+        className="pl-0.5 pr-px leading-none opacity-65 transition-opacity hover:opacity-100"
       >
-        <X className="size-3" />
+        ×
       </button>
     </span>
   );
