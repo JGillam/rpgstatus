@@ -1,31 +1,24 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import type { AppliedCondition, CoarseHp, MobPublicView, Player, PlayerSnapshot, PlayerStatus } from '@domain';
+import type {
+  AppliedCondition,
+  CoarseHp,
+  ConditionCategory,
+  MobPublicView,
+  Player,
+  PlayerSnapshot,
+  PlayerStatus,
+} from '@domain';
 import { clampCurrent, clampWrath, decodeLog, formatLog, LIMITS, nextCounter } from '@domain';
-import {
-  ArrowDown,
-  ArrowUp,
-  Check,
-  Download,
-  Heart,
-  HeartCrack,
-  Minus,
-  Plus,
-  ScrollText,
-  ShieldAlert,
-  Skull,
-  X,
-  type LucideIcon,
-} from 'lucide-react';
+import { Check, Download, Eye, X } from 'lucide-react';
 import { adjustGlory, updatePlayer, type PlayerPatch } from '@/lib/api';
 import { clearIdentity, loadIdentity } from '@/lib/identity';
 import { useSessionState } from '@/lib/useSessionState';
-import { coarseColor, coarseLabel, conditionColor, statusColor, statusLabel } from '@/lib/theme';
+import { coarseColor, coarseLabel, statusColor, statusLabel } from '@/lib/theme';
 import { CONDITIONS, conditionDef } from '@/lib/conditions';
 import { FreshnessDot } from '@/components/FreshnessDot';
 import { BottomSheet } from '@/components/BottomSheet';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
 interface Freshness {
@@ -33,6 +26,20 @@ interface Freshness {
   updatedAt: number | null;
   error: boolean;
 }
+
+// Condition-chip theming for the player screen (prototype): damage = red, affliction =
+// violet, everything else (impairment) = gold/neutral. This is a local remap of the
+// shared category→token mapping (theme.ts keeps impairment blue for the GM screen).
+const CONDITION_CHIP_COLOR: Record<ConditionCategory, string> = {
+  damage: 'var(--color-red)',
+  affliction: 'var(--color-violet)',
+  impairment: 'var(--color-gold)',
+};
+const chipColor = (c: ConditionCategory): string => CONDITION_CHIP_COLOR[c];
+
+/** Build an alpha'd colour from a token/var — used for subtle tints on var-based colours. */
+const alpha = (color: string, pct: number): string =>
+  `color-mix(in srgb, ${color} ${pct}%, transparent)`;
 
 export default function Play() {
   const navigate = useNavigate();
@@ -51,7 +58,7 @@ export default function Play() {
 
   if (!snapshot) {
     return (
-      <div className="grid min-h-dvh place-items-center bg-bg-player px-6 text-center">
+      <div className="grid min-h-dvh place-items-center bg-bg px-6 text-center">
         <p className="text-muted">
           {loading ? 'Loading session…' : error ? 'Connection lost. Retrying…' : 'No session.'}
         </p>
@@ -222,194 +229,276 @@ function PlayerBoard({ snapshot, code, token, freshness, onLeave, refresh }: Boa
   };
 
   const roster = players.map((p) => (you && p.id === youId ? you : p));
+  const actedCount = roster.filter((p) => p.actedThisRound).length;
   const others = players.filter((p) => p.id !== youId);
   const tooltipDef = tooltipId ? conditionDef(tooltipId) : undefined;
 
   return (
     <div className="min-h-dvh bg-bg-player">
-      {/* Sticky header: round + turn strip + acted toggle */}
-      <header className="sticky top-0 z-30 border-b border-default bg-panel/95 backdrop-blur">
-        <div className="mx-auto w-full max-w-[430px] px-4">
-          <div className="flex items-center justify-between gap-3 py-2.5">
-            <div className="flex items-baseline gap-2">
-              <span className="text-xs uppercase tracking-wide text-muted">Round</span>
-              <span className="font-display text-2xl font-bold tabular-nums text-gold">
-                {session.round}
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <FreshnessDot
-                secondsAgo={freshness.secondsAgo}
-                updatedAt={freshness.updatedAt}
-                error={freshness.error}
-              />
-              <Button variant="ghost" size="sm" onClick={onLeave}>
-                Leave
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {roster.map((p) => (
-              <TurnChip key={p.id} player={p} isYou={p.id === youId} />
-            ))}
-          </div>
-
-          <div className="pb-2.5">
-            <ActedToggle acted={!!you?.actedThisRound} onToggle={onToggleActed} disabled={!you} />
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto flex w-full max-w-[430px] flex-col gap-4 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-        <ResourcesCard
-          glory={glory}
-          ruin={session.ruin}
-          onPull={() => void pushGlory(-1)}
-          onPush={() => void pushGlory(1)}
-          onOpenLog={() => setLogOpen(true)}
+      {/* Centered 430px column: 40K dark bg + hairline side borders + ambient gold glow. */}
+      <div className="relative mx-auto min-h-dvh w-full max-w-[430px] border-x border-[#241d12] bg-bg">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 z-0 h-[340px]"
+          style={{
+            background:
+              'radial-gradient(120% 60% at 50% -5%, rgba(240,180,41,0.06), transparent 42%)',
+          }}
         />
 
-        {you ? (
-          <YourCard
-            you={you}
-            onWounds={onWounds}
-            onShock={onShock}
-            onWrath={onWrath}
-            onToggleDown={onToggleDown}
-            onRemoveCondition={onRemoveCondition}
-            onOpenPicker={() => setPickerOpen(true)}
-            onOpenTooltip={setTooltipId}
-          />
-        ) : (
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-sm text-muted">Your character isn&apos;t in this session anymore.</p>
-            </CardContent>
-          </Card>
-        )}
-
-        <Card>
-          <CardHeader className="p-4 pb-2">
-            <CardTitle>
-              Party <span className="text-muted">({others.length})</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2 p-4 pt-0">
-            {others.length === 0 && <p className="text-sm text-muted">No other players yet.</p>}
-            {others.map((p) => (
-              <PartyRow key={p.id} player={p} onTapCondition={setTooltipId} />
-            ))}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="p-4 pb-2">
-            <CardTitle>
-              Enemies <span className="text-muted">({mobs.length})</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2 p-4 pt-0">
-            {mobs.length === 0 && <p className="text-sm text-muted">No enemies revealed.</p>}
-            {mobs.map((m) => (
-              <EnemyRow key={m.id} mob={m} onTapCondition={setTooltipId} />
-            ))}
-          </CardContent>
-        </Card>
-      </main>
-
-      {/* --- Bottom sheets ---------------------------------------------------- */}
-      <BottomSheet
-        open={tooltipId !== null}
-        onClose={() => setTooltipId(null)}
-        title={tooltipDef?.name ?? 'Condition'}
-      >
-        {tooltipDef ? (
-          <div className="flex flex-col gap-3 pb-2">
-            <span
-              className="inline-flex w-fit items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs uppercase tracking-wide"
-              style={{ borderColor: conditionColor(tooltipDef.category), color: conditionColor(tooltipDef.category) }}
-            >
-              {tooltipDef.category}
-              {tooltipDef.stacks ? ' · stacks' : ''}
-            </span>
-            <p className="text-sm leading-relaxed text-text-2">{tooltipDef.summary}</p>
-          </div>
-        ) : (
-          <p className="pb-2 text-sm text-muted">No details for &ldquo;{tooltipId}&rdquo;.</p>
-        )}
-      </BottomSheet>
-
-      <BottomSheet
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        title="Add condition"
-        footer={
-          <Button className="w-full" onClick={() => setPickerOpen(false)}>
-            Done
-          </Button>
-        }
-      >
-        <div className="flex flex-col gap-1.5 pb-2">
-          {CONDITIONS.map((def) => {
-            const applied = you?.conditions.find((c) => c.id === def.id);
-            const color = conditionColor(def.category);
-            return (
-              <button
-                key={def.id}
-                type="button"
-                onClick={() => onAddCondition(def.id)}
-                className="flex items-start gap-3 rounded-md border border-default bg-raised px-3 py-2 text-left transition-colors hover:border-emphasis"
-              >
-                <span className="mt-1 size-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="flex items-center gap-2">
-                    <span className="font-medium text-text">{def.name}</span>
-                    {applied && (
-                      <span className="rounded-full border border-gold/60 px-1.5 text-[10px] text-gold">
-                        {def.stacks && applied.rank ? `×${applied.rank}` : 'added'}
-                      </span>
-                    )}
-                  </span>
-                  <span className="line-clamp-2 text-xs text-muted">{def.summary}</span>
+        {/* Sticky header: title + join code + freshness, round strip, turn chips, acted. */}
+        <header
+          className="sticky top-0 z-30 border-b border-default shadow-[0_6px_20px_-8px_rgba(0,0,0,0.65)]"
+          style={{ background: 'linear-gradient(180deg,#151009,#0d0b08 88%)' }}
+        >
+          <div className="px-4">
+            <div className="flex items-center justify-between gap-2 pt-2.5">
+              <span className="font-display text-[15px] font-bold tracking-[1.5px] text-text-2">
+                WRATH <span className="text-gold">&amp;</span> GLORY
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="rounded-[3px] border border-default px-[7px] py-[4px] font-display text-[11px] font-bold tracking-[1px] text-gold">
+                  {code}
                 </span>
-                <Plus className="mt-0.5 size-4 shrink-0 text-muted" />
-              </button>
-            );
-          })}
-        </div>
-      </BottomSheet>
-
-      <BottomSheet
-        open={logOpen}
-        onClose={() => setLogOpen(false)}
-        title="Activity log"
-        footer={
-          <Button variant="outline" className="w-full" onClick={exportLog} disabled={log.length === 0}>
-            <Download /> Export JSON
-          </Button>
-        }
-      >
-        {log.length === 0 ? (
-          <p className="pb-2 text-sm text-muted">No activity yet.</p>
-        ) : (
-          <ul className="flex flex-col gap-1.5 pb-2">
-            {log
-              .map((e) => decodeLog(e))
-              .map((v, i) => ({ v, key: i }))
-              .reverse()
-              .map(({ v, key }) => (
-                <li
-                  key={key}
-                  className="flex items-baseline justify-between gap-3 rounded-md border border-default bg-raised px-3 py-2"
+                <FreshnessDot
+                  secondsAgo={freshness.secondsAgo}
+                  updatedAt={freshness.updatedAt}
+                  error={freshness.error}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={onLeave}
                 >
-                  <span className="text-sm text-text-2">{formatLog(v, nameByIndex)}</span>
-                  <span className="shrink-0 text-[11px] tabular-nums text-faint">{fmtTime(v.ts)}</span>
-                </li>
+                  Leave
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex items-baseline justify-between gap-3 pt-2">
+              <span className="font-display text-[17px] font-bold tracking-[0.5px] text-text-2">
+                ROUND <span className="text-gold">{session.round}</span>
+              </span>
+              <span className="text-[13px] italic text-muted">
+                {actedCount} of {roster.length} acted
+              </span>
+            </div>
+
+            <div className="mt-2 flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {roster.map((p) => (
+                <TurnChip key={p.id} player={p} isYou={p.id === youId} />
               ))}
-          </ul>
-        )}
-      </BottomSheet>
+            </div>
+
+            <div className="pb-2.5">
+              <ActedToggle acted={!!you?.actedThisRound} onToggle={onToggleActed} disabled={!you} />
+            </div>
+          </div>
+        </header>
+
+        <main className="relative z-10 flex flex-col gap-5 px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4">
+          {/* SHARED RESOURCES ------------------------------------------------ */}
+          <section>
+            <SectionHeader
+              label="SHARED RESOURCES"
+              action={
+                <button
+                  type="button"
+                  onClick={() => setLogOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-[4px] border border-default px-2 py-1 font-display text-[10px] tracking-[1.5px] text-muted transition-colors hover:border-emphasis hover:text-text"
+                >
+                  <span aria-hidden>☰</span> LOG
+                </button>
+              }
+            />
+            <SharedResources
+              glory={glory}
+              ruin={session.ruin}
+              onPull={() => void pushGlory(-1)}
+              onPush={() => void pushGlory(1)}
+            />
+          </section>
+
+          {/* YOUR CHARACTER -------------------------------------------------- */}
+          <section>
+            <SectionHeader label="YOUR CHARACTER" />
+            {you ? (
+              <>
+                <YourCard
+                  you={you}
+                  onWounds={onWounds}
+                  onShock={onShock}
+                  onWrath={onWrath}
+                  onToggleDown={onToggleDown}
+                  onRemoveCondition={onRemoveCondition}
+                  onOpenPicker={() => setPickerOpen(true)}
+                  onOpenTooltip={setTooltipId}
+                />
+                <p className="mt-2.5 text-center text-[11px] italic text-faint">
+                  You control only your own card. Tap a condition for its rules.
+                </p>
+              </>
+            ) : (
+              <div className="rounded-[6px] border border-default bg-panel p-4">
+                <p className="text-sm text-muted">
+                  Your character isn&apos;t in this session anymore.
+                </p>
+              </div>
+            )}
+          </section>
+
+          {/* THE PARTY ------------------------------------------------------- */}
+          <section>
+            <SectionHeader label="THE PARTY" />
+            <div className="flex flex-col gap-2">
+              {others.length === 0 && (
+                <p className="text-[13px] italic text-faint">No other players yet.</p>
+              )}
+              {others.map((p) => (
+                <PartyRow key={p.id} player={p} onTapCondition={setTooltipId} />
+              ))}
+            </div>
+          </section>
+
+          {/* ENEMIES --------------------------------------------------------- */}
+          <section>
+            <SectionHeader label="ENEMIES" />
+            <div className="flex flex-col gap-2">
+              {mobs.length === 0 && (
+                <p className="text-[13px] italic text-faint">No enemies revealed.</p>
+              )}
+              {mobs.map((m) => (
+                <EnemyRow key={m.id} mob={m} onTapCondition={setTooltipId} />
+              ))}
+            </div>
+          </section>
+        </main>
+
+        {/* --- Bottom sheets -------------------------------------------------- */}
+        <BottomSheet
+          open={tooltipId !== null}
+          onClose={() => setTooltipId(null)}
+          title={
+            tooltipDef ? (
+              <span style={{ color: chipColor(tooltipDef.category) }}>{tooltipDef.name}</span>
+            ) : (
+              'Condition'
+            )
+          }
+        >
+          {tooltipDef ? (
+            <div className="flex flex-col gap-3 pb-2">
+              {tooltipDef.stacks && (
+                <span
+                  className="w-fit rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[1px]"
+                  style={{
+                    borderColor: chipColor(tooltipDef.category),
+                    color: chipColor(tooltipDef.category),
+                  }}
+                >
+                  Stacks
+                </span>
+              )}
+              <p className="text-sm leading-relaxed text-text-2">{tooltipDef.summary}</p>
+            </div>
+          ) : (
+            <p className="pb-2 text-sm text-muted">No details for &ldquo;{tooltipId}&rdquo;.</p>
+          )}
+        </BottomSheet>
+
+        <BottomSheet
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          title="Add condition"
+          footer={
+            <Button className="w-full" onClick={() => setPickerOpen(false)}>
+              Done
+            </Button>
+          }
+        >
+          <div className="grid grid-cols-2 gap-2 pb-2">
+            {CONDITIONS.map((def) => {
+              const applied = you?.conditions.find((c) => c.id === def.id);
+              const color = chipColor(def.category);
+              const sub = applied
+                ? def.stacks && applied.rank
+                  ? `Applied ×${applied.rank}`
+                  : 'Applied'
+                : def.stacks
+                  ? 'Stackable'
+                  : 'Single';
+              return (
+                <button
+                  key={def.id}
+                  type="button"
+                  onClick={() => onAddCondition(def.id)}
+                  className="flex flex-col gap-1 rounded-[6px] border bg-raised px-3 py-2.5 text-left transition-colors hover:border-emphasis"
+                  style={{ borderColor: applied ? color : 'var(--color-default)' }}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className="size-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: color }}
+                    />
+                    <span className="min-w-0 truncate font-display text-[13px] font-semibold text-text">
+                      {def.name}
+                    </span>
+                  </span>
+                  <span className="text-[11px] text-muted">{sub}</span>
+                </button>
+              );
+            })}
+          </div>
+        </BottomSheet>
+
+        <BottomSheet
+          open={logOpen}
+          onClose={() => setLogOpen(false)}
+          title="Activity log"
+          footer={
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={exportLog}
+              disabled={log.length === 0}
+            >
+              <Download /> Export JSON
+            </Button>
+          }
+        >
+          {log.length === 0 ? (
+            <p className="pb-2 text-sm text-muted">No activity yet.</p>
+          ) : (
+            <ul className="flex flex-col gap-1.5 pb-2">
+              {log
+                .map((e) => decodeLog(e))
+                .map((v, i) => ({ v, key: i }))
+                .reverse()
+                .map(({ v, key }) => (
+                  <li
+                    key={key}
+                    className="flex items-center gap-2.5 rounded-[6px] border border-default bg-raised px-3 py-2"
+                  >
+                    <span
+                      className="size-2 shrink-0 rounded-full"
+                      style={{
+                        backgroundColor:
+                          v.type === 'G' ? 'var(--color-gold)' : 'var(--color-violet)',
+                      }}
+                    />
+                    <span className="flex-1 text-[13px] text-text-2">
+                      {formatLog(v, nameByIndex)}
+                    </span>
+                    <span className="shrink-0 text-[11px] italic tabular-nums text-faint">
+                      {fmtTime(v.ts)}
+                    </span>
+                  </li>
+                ))}
+            </ul>
+          )}
+        </BottomSheet>
+      </div>
     </div>
   );
 }
@@ -418,28 +507,58 @@ function PlayerBoard({ snapshot, code, token, freshness, onLeave, refresh }: Boa
 // Presentational pieces
 // ---------------------------------------------------------------------------
 
-function TurnChip({ player, isYou }: { player: Player; isYou: boolean }) {
-  const acted = player.actedThisRound;
+function SectionHeader({ label, action }: { label: string; action?: ReactNode }) {
   return (
-    <div
-      className={cn(
-        'flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm',
-        isYou
-          ? 'border-gold bg-gold/10 text-gold'
-          : acted
-            ? 'border-default bg-raised text-muted'
-            : 'border-strong bg-raised text-text',
-      )}
-    >
-      {acted ? (
-        <Check className="size-3.5" />
-      ) : (
-        <span className="size-1.5 rounded-full bg-current opacity-70" aria-hidden />
-      )}
-      <span className="max-w-[7rem] truncate">
-        {player.name}
-        {isYou && ' · You'}
+    <div className="mb-2.5 flex items-center gap-2">
+      <span aria-hidden className="text-[11px] leading-none text-gold">
+        ◆
       </span>
+      <span className="font-display text-[10px] font-semibold tracking-[3px] text-muted">
+        {label}
+      </span>
+      {action && <div className="ml-auto">{action}</div>}
+    </div>
+  );
+}
+
+function PIndexChip({ index }: { index: number }) {
+  return (
+    <span className="shrink-0 rounded-[3px] border border-default px-1.5 py-0.5 font-display text-[10px] font-semibold tabular-nums text-muted">
+      P{index}
+    </span>
+  );
+}
+
+function TurnChip({ player, isYou }: { player: Player; isYou: boolean }) {
+  if (isYou) {
+    return (
+      <div
+        className="flex shrink-0 items-center gap-1.5 rounded-full border-[1.5px] border-gold px-3 py-[7px] font-display text-[13px] text-gold"
+        style={{ backgroundColor: 'rgba(240,180,41,0.12)' }}
+      >
+        <span className="max-w-[8rem] truncate">{player.name} · You</span>
+      </div>
+    );
+  }
+  if (player.actedThisRound) {
+    return (
+      <div
+        className="flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-[7px] text-[13px]"
+        style={{
+          backgroundColor: 'rgba(62,207,106,0.12)',
+          borderColor: 'rgba(62,207,106,0.4)',
+          color: '#8fe0a6',
+        }}
+      >
+        <Check className="size-3.5" style={{ color: '#3ecf6a' }} />
+        <span className="max-w-[8rem] truncate">{player.name}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-default bg-transparent px-3 py-[7px] text-[13px] text-muted">
+      <span className="size-[7px] rounded-full bg-faint" aria-hidden />
+      <span className="max-w-[8rem] truncate">{player.name}</span>
     </div>
   );
 }
@@ -459,70 +578,97 @@ function ActedToggle({
       onClick={onToggle}
       disabled={disabled}
       className={cn(
-        'flex w-full items-center justify-center gap-2 rounded-lg border py-2.5 font-display text-sm font-semibold uppercase tracking-[0.15em] transition-colors disabled:opacity-50',
+        'flex w-full items-center justify-center gap-2 rounded-[6px] py-3 font-display font-bold uppercase transition-colors disabled:opacity-50',
         acted
-          ? 'border-gold bg-gold text-on-gold'
-          : 'border-strong bg-raised text-text hover:border-emphasis',
+          ? 'border text-[12px] tracking-[1.5px]'
+          : 'bg-gold text-[13px] tracking-[2px] text-on-gold hover:bg-gold-hi',
       )}
+      style={
+        acted
+          ? {
+              backgroundColor: 'rgba(62,207,106,0.1)',
+              borderColor: 'rgba(62,207,106,0.4)',
+              color: '#3ecf6a',
+            }
+          : { boxShadow: '0 0 20px rgba(240,180,41,0.35)' }
+      }
     >
       {acted ? (
         <>
-          <Check className="size-4" /> Acted
+          <Check className="size-4" /> YOU&apos;VE ACTED · TAP TO UNDO
         </>
       ) : (
-        "I've acted"
+        <>I&apos;VE ACTED</>
       )}
     </button>
   );
 }
 
-function ResourcesCard({
+function SharedResources({
   glory,
   ruin,
   onPull,
   onPush,
-  onOpenLog,
 }: {
   glory: number;
   ruin: number | null;
   onPull: () => void;
   onPush: () => void;
-  onOpenLog: () => void;
 }) {
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between">
-          <div className="flex flex-col">
-            <span className="text-xs uppercase tracking-wide text-muted">Glory</span>
-            <span className="font-display text-4xl font-bold tabular-nums text-gold">{glory}</span>
+    <>
+      <div className={ruin !== null ? 'grid grid-cols-[1.4fr_1fr] gap-2.5' : 'grid'}>
+        <div className="rounded-[6px] border border-default bg-panel px-[15px] py-[13px]">
+          <div className="font-display text-[10px] font-semibold tracking-[2px] text-gold">
+            GLORY
           </div>
-          <div className="flex items-start gap-3">
-            {ruin !== null && (
-              <div className="flex flex-col items-end">
-                <span className="text-xs uppercase tracking-wide text-muted">Ruin</span>
-                <span className="font-display text-2xl font-bold tabular-nums text-ruin">{ruin}</span>
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={onOpenLog}
-              className="inline-flex items-center gap-1.5 rounded-md border border-strong bg-raised px-2.5 py-1.5 text-xs text-text-2 transition-colors hover:border-emphasis hover:text-text"
+          <div
+            className="font-display text-[50px] font-bold leading-none tabular-nums text-gold"
+            style={{ textShadow: '0 0 22px rgba(240,180,41,0.45)' }}
+          >
+            {glory}
+          </div>
+          <div className="mt-1.5 text-[11px] italic text-muted">party pool · always seen</div>
+        </div>
+        {ruin !== null && (
+          <div className="rounded-[6px] border border-default bg-panel px-[15px] py-[13px]">
+            <div className="flex items-center gap-1 font-display text-[10px] font-semibold tracking-[2px] text-ruin">
+              <Eye className="size-3" /> RUIN
+            </div>
+            <div
+              className="font-display text-[50px] font-bold leading-none tabular-nums text-ruin"
+              style={{ textShadow: '0 0 22px rgba(169,139,255,0.4)' }}
             >
-              <ScrollText className="size-4" /> Log
-            </button>
+              {ruin}
+            </div>
+            <div className="mt-1.5 text-[11px] italic text-muted">GM pool · view only</div>
           </div>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <Button variant="secondary" onClick={onPull} disabled={glory <= 0}>
-            <Minus /> Pull 1
-          </Button>
-          <Button onClick={onPush}>
-            <Plus /> Push 1
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+        )}
+      </div>
+
+      <div className="mt-2.5 flex gap-2.5">
+        <button
+          type="button"
+          onClick={onPull}
+          disabled={glory <= 0}
+          className="flex-1 rounded-[6px] border border-emphasis py-[15px] font-display text-[12px] font-bold tracking-[1px] text-text transition-colors hover:enabled:bg-raised disabled:opacity-40"
+        >
+          PULL −1
+        </button>
+        <button
+          type="button"
+          onClick={onPush}
+          className="flex-[1.3] rounded-[6px] bg-gold py-[15px] font-display text-[12px] font-bold tracking-[1px] text-on-gold transition-colors hover:bg-gold-hi"
+          style={{ boxShadow: '0 0 18px rgba(240,180,41,0.25)' }}
+        >
+          PUSH +1
+        </button>
+      </div>
+
+      <p className="mt-2.5 text-center text-[11px] italic text-faint">
+        Anyone can push or pull Glory — every change is logged with your name.
+      </p>
+    </>
   );
 }
 
@@ -549,101 +695,108 @@ function YourCard({
 }: YourCardProps) {
   const down = you.status !== 'active';
   return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between p-4">
-        <CardTitle className="truncate">{you.name}</CardTitle>
+    <div
+      className="rounded-[6px] border bg-panel p-[15px]"
+      style={{
+        borderColor: down ? '#6a4a2a' : 'var(--color-emphasis)',
+        boxShadow: '0 0 0 1px rgba(240,180,41,0.08)',
+      }}
+    >
+      {/* gold top-accent line, bled to the card edges */}
+      <div
+        aria-hidden
+        style={{
+          height: 2,
+          margin: '-15px -15px 14px',
+          background: 'linear-gradient(90deg,transparent,#f0b429,transparent)',
+        }}
+      />
+
+      <div className="flex items-center gap-2">
+        <PIndexChip index={you.index} />
+        <span className="min-w-0 flex-1 truncate font-display text-[18px] font-semibold text-text">
+          {you.name}
+        </span>
+        <span className="shrink-0 rounded-[3px] border border-gold/50 bg-gold/10 px-1.5 py-0.5 font-display text-[10px] font-semibold tracking-[1px] text-gold">
+          YOU
+        </span>
         <span
-          className="flex shrink-0 items-center gap-1.5 text-xs font-medium"
-          style={{ color: statusColor(you.status) }}
+          className="shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold"
+          style={{
+            backgroundColor: 'rgba(0,0,0,0.25)',
+            borderColor: alpha(statusColor(you.status), 40),
+            color: statusColor(you.status),
+          }}
         >
-          <span className="size-2 rounded-full" style={{ backgroundColor: statusColor(you.status) }} />
           {statusLabel(you.status)}
         </span>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3 p-4 pt-0">
-        <BarStepper
-          label="Wounds"
+      </div>
+
+      <div className="mt-4 flex flex-col gap-3.5">
+        <StatBar
+          label="WOUNDS"
           value={you.wounds}
           max={you.maxWounds}
           color="var(--color-wounds)"
           onDelta={onWounds}
         />
-        <BarStepper
-          label="Shock"
+        <StatBar
+          label="SHOCK"
           value={you.shock}
           max={you.maxShock}
           color="var(--color-shock)"
           onDelta={onShock}
         />
-
-        <div className="flex items-center justify-between rounded-md border border-default bg-raised px-3 py-2">
-          <span className="text-xs uppercase tracking-wide text-muted">Wrath</span>
-          <div className="flex items-center gap-3">
-            <StepBtn label="Decrease Wrath" onClick={() => onWrath(-1)} disabled={you.wrath <= LIMITS.wrath.min}>
-              <Minus />
-            </StepBtn>
-            <span className="min-w-6 text-center font-display text-xl font-bold tabular-nums text-wrath">
-              {you.wrath}
-            </span>
-            <StepBtn label="Increase Wrath" onClick={() => onWrath(1)} disabled={you.wrath >= LIMITS.wrath.max}>
-              <Plus />
-            </StepBtn>
-          </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-display text-[10px] font-semibold tracking-[2px] text-muted">
+            WRATH
+          </span>
+          <StepperGroup
+            label="Wrath"
+            value={you.wrath}
+            valueColor="var(--color-wrath)"
+            onDec={() => onWrath(-1)}
+            onInc={() => onWrath(1)}
+            decDisabled={you.wrath <= LIMITS.wrath.min}
+            incDisabled={you.wrath >= LIMITS.wrath.max}
+          />
         </div>
+      </div>
 
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs uppercase tracking-wide text-muted">Conditions</span>
-            <button
-              type="button"
-              onClick={onOpenPicker}
-              className="inline-flex items-center gap-1 rounded-md border border-strong bg-raised px-2 py-1 text-xs text-text-2 transition-colors hover:border-emphasis hover:text-text"
-            >
-              <Plus className="size-3.5" /> Condition
-            </button>
-          </div>
-          {you.conditions.length === 0 ? (
-            <p className="text-xs text-faint">No active conditions.</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {you.conditions.map((c, i) => (
-                <ConditionChip
-                  key={c.id + i}
-                  applied={c}
-                  onTap={() => onOpenTooltip(c.id)}
-                  onRemove={() => onRemoveCondition(c.id)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
+      <div className="mt-4 flex flex-wrap items-center gap-1.5">
+        {you.conditions.map((c, i) => (
+          <ConditionChip
+            key={c.id + i}
+            applied={c}
+            onTap={() => onOpenTooltip(c.id)}
+            onRemove={() => onRemoveCondition(c.id)}
+          />
+        ))}
         <button
           type="button"
-          onClick={onToggleDown}
-          className={cn(
-            'flex w-full items-center justify-center gap-2 rounded-md border py-2.5 text-sm font-medium transition-colors',
-            down
-              ? 'border-status-active/50 text-status-active hover:bg-status-active/10'
-              : 'border-wounds/50 text-wounds hover:bg-wounds/10',
-          )}
+          onClick={onOpenPicker}
+          className="rounded-full border border-dashed border-strong px-2.5 py-[3px] text-[11px] tracking-[0.5px] text-muted transition-colors hover:border-emphasis hover:text-text"
         >
-          {down ? (
-            <>
-              <ArrowUp className="size-4" /> Stand up
-            </>
-          ) : (
-            <>
-              <ArrowDown className="size-4" /> Go down
-            </>
-          )}
+          + CONDITION
         </button>
-      </CardContent>
-    </Card>
+      </div>
+
+      <button
+        type="button"
+        onClick={onToggleDown}
+        className={cn(
+          'mt-4 flex w-full items-center justify-center gap-2 rounded-[6px] py-3 font-display text-[12px] font-bold tracking-[1px] transition-colors',
+          down ? 'text-on-gold' : 'border border-strong text-text hover:bg-raised',
+        )}
+        style={down ? { backgroundColor: 'var(--color-status-down)' } : undefined}
+      >
+        {down ? '▲ STAND BACK UP' : '▼ GO DOWN'}
+      </button>
+    </div>
   );
 }
 
-function BarStepper({
+function StatBar({
   label,
   value,
   max,
@@ -658,53 +811,74 @@ function BarStepper({
 }) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0;
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between">
-        <span className="text-xs uppercase tracking-wide text-muted">{label}</span>
-        <span className="font-display text-sm font-semibold tabular-nums" style={{ color }}>
-          {value}
-          <span className="text-faint">/{max}</span>
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-display text-[10px] font-semibold tracking-[2px] text-muted">
+          {label}
         </span>
+        <StepperGroup
+          label={label}
+          value={value}
+          onDec={() => onDelta(-1)}
+          onInc={() => onDelta(1)}
+          decDisabled={value <= 0}
+          incDisabled={value >= max}
+        />
       </div>
-      <div className="flex items-center gap-2">
-        <StepBtn label={`Decrease ${label}`} onClick={() => onDelta(-1)} disabled={value <= 0}>
-          <Minus />
-        </StepBtn>
-        <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-track">
-          <div
-            className="h-full rounded-full transition-[width] duration-300"
-            style={{ width: `${pct}%`, backgroundColor: color }}
-          />
-        </div>
-        <StepBtn label={`Increase ${label}`} onClick={() => onDelta(1)} disabled={value >= max}>
-          <Plus />
-        </StepBtn>
+      <div className="mt-2 h-[11px] overflow-hidden rounded-[3px] border border-default bg-track">
+        <div
+          className="h-full transition-[width] duration-300"
+          style={{ width: `${pct}%`, backgroundColor: color }}
+        />
       </div>
     </div>
   );
 }
 
-function StepBtn({
-  children,
-  onClick,
-  disabled,
+function StepperGroup({
+  value,
+  valueColor,
+  onDec,
+  onInc,
+  decDisabled,
+  incDisabled,
   label,
 }: {
-  children: ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
+  value: number;
+  valueColor?: string;
+  onDec: () => void;
+  onInc: () => void;
+  decDisabled?: boolean;
+  incDisabled?: boolean;
   label: string;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      disabled={disabled}
-      className="grid size-9 shrink-0 place-items-center rounded-md border border-strong bg-raised text-text transition-colors hover:enabled:border-emphasis hover:enabled:bg-track disabled:opacity-40 [&_svg]:size-4"
-    >
-      {children}
-    </button>
+    <div className="inline-flex items-stretch overflow-hidden rounded-[5px] border border-strong">
+      <button
+        type="button"
+        aria-label={`Decrease ${label}`}
+        onClick={onDec}
+        disabled={decDisabled}
+        className="grid w-9 place-items-center font-display text-lg leading-none text-text transition-colors hover:enabled:bg-track disabled:opacity-40"
+      >
+        −
+      </button>
+      <span
+        className="grid min-w-10 place-items-center border-x border-strong px-1 font-display text-lg font-bold tabular-nums text-text"
+        style={valueColor ? { color: valueColor } : undefined}
+      >
+        {value}
+      </span>
+      <button
+        type="button"
+        aria-label={`Increase ${label}`}
+        onClick={onInc}
+        disabled={incDisabled}
+        className="grid w-9 place-items-center font-display text-lg leading-none text-text transition-colors hover:enabled:bg-track disabled:opacity-40"
+      >
+        +
+      </button>
+    </div>
   );
 }
 
@@ -719,12 +893,12 @@ function ConditionChip({
 }) {
   const def = conditionDef(applied.id);
   const name = def?.name ?? applied.id;
-  const color = def ? conditionColor(def.category) : 'var(--color-muted)';
+  const color = def ? chipColor(def.category) : 'var(--color-muted)';
   const rank = applied.rank && applied.rank > 1 ? ` ${applied.rank}` : '';
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full border bg-raised px-2 py-0.5 text-xs"
-      style={{ borderColor: color, color }}
+      className="inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[11px]"
+      style={{ borderColor: color, color, backgroundColor: alpha(color, 12) }}
     >
       <button type="button" onClick={onTap} className="max-w-[9rem] truncate">
         {name}
@@ -735,7 +909,7 @@ function ConditionChip({
           type="button"
           aria-label={`Remove ${name}`}
           onClick={onRemove}
-          className="-mr-0.5 grid size-4 place-items-center rounded-full hover:bg-white/10"
+          className="-mr-0.5 grid size-3.5 place-items-center rounded-full hover:bg-white/10"
         >
           <X className="size-3" />
         </button>
@@ -744,22 +918,58 @@ function ConditionChip({
   );
 }
 
-function PartyRow({ player, onTapCondition }: { player: Player; onTapCondition: (id: string) => void }) {
+function PartyRow({
+  player,
+  onTapCondition,
+}: {
+  player: Player;
+  onTapCondition: (id: string) => void;
+}) {
+  const dead = player.status === 'dead';
+  const hurt =
+    player.status !== 'active' || player.wounds < player.maxWounds || player.shock > 0;
   return (
-    <div className="rounded-md border border-default bg-raised px-3 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-text">{player.name}</span>
+    <div
+      className="rounded-[5px] border border-l-[3px] px-3 py-[11px]"
+      style={{
+        backgroundColor: hurt ? '#171009' : '#120f09',
+        borderColor: '#241d12',
+        borderLeftColor: statusColor(player.status),
+        opacity: dead ? 0.6 : 1,
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <PIndexChip index={player.index} />
         <span
-          className="flex shrink-0 items-center gap-1.5 text-xs font-medium"
+          className={cn(
+            'min-w-0 flex-1 truncate font-display text-[14px] font-semibold text-text',
+            dead && 'line-through',
+          )}
+        >
+          {player.name}
+        </span>
+        <span
+          className="shrink-0 text-[10px] font-semibold"
           style={{ color: statusColor(player.status) }}
         >
-          <span className="size-2 rounded-full" style={{ backgroundColor: statusColor(player.status) }} />
           {statusLabel(player.status)}
         </span>
       </div>
       <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
-        <MiniBar label="W" value={player.wounds} max={player.maxWounds} color="var(--color-wounds)" />
-        <MiniBar label="S" value={player.shock} max={player.maxShock} color="var(--color-shock)" />
+        <MiniBar
+          label="W"
+          value={player.wounds}
+          max={player.maxWounds}
+          fillColor="var(--color-wounds)"
+          numColor="#ff8085"
+        />
+        <MiniBar
+          label="S"
+          value={player.shock}
+          max={player.maxShock}
+          fillColor="var(--color-shock)"
+          numColor="#7cc7ef"
+        />
       </div>
       {player.conditions.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
@@ -776,56 +986,111 @@ function MiniBar({
   label,
   value,
   max,
-  color,
+  fillColor,
+  numColor,
 }: {
   label: string;
   value: number;
   max: number;
-  color: string;
+  fillColor: string;
+  numColor: string;
 }) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0;
   return (
     <div className="flex items-center gap-1.5">
-      <span className="w-3 shrink-0 text-[10px] uppercase text-faint">{label}</span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-track">
-        <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
+      <span className="text-[10px] font-semibold" style={{ color: numColor }}>
+        {label}
+      </span>
+      <div className="h-[5px] flex-1 overflow-hidden rounded-full bg-track">
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: fillColor }} />
       </div>
-      <span className="shrink-0 text-[10px] tabular-nums text-muted">
+      <span className="shrink-0 text-[10px] tabular-nums" style={{ color: numColor }}>
         {value}/{max}
       </span>
     </div>
   );
 }
 
-const COARSE_ICON: Record<CoarseHp, LucideIcon> = {
-  healthy: Heart,
-  minor: ShieldAlert,
-  gravely: HeartCrack,
-  dead: Skull,
-};
+function CoarseIcon({ coarse }: { coarse: CoarseHp }) {
+  const color = coarseColor(coarse);
+  const svg = { flexShrink: 0, color } as const;
+  if (coarse === 'healthy') {
+    return (
+      <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden style={svg}>
+        <circle cx="8" cy="8" r="6" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (coarse === 'minor') {
+    return (
+      <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden style={svg}>
+        <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M8 2.5 A5.5 5.5 0 0 1 8 13.5 Z" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (coarse === 'gravely') {
+    return (
+      <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden style={svg}>
+        <path
+          d="M8 2.2 L14.4 13.2 H1.6 Z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+        />
+        <line x1="8" y1="6.2" x2="8" y2="9.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="8" cy="11.4" r="0.9" fill="currentColor" />
+      </svg>
+    );
+  }
+  return (
+    <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden style={svg}>
+      <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <line x1="5.6" y1="5.6" x2="10.4" y2="10.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="10.4" y1="5.6" x2="5.6" y2="10.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 
-function EnemyRow({ mob, onTapCondition }: { mob: MobPublicView; onTapCondition: (id: string) => void }) {
-  const Icon = COARSE_ICON[mob.coarse];
+function EnemyRow({
+  mob,
+  onTapCondition,
+}: {
+  mob: MobPublicView;
+  onTapCondition: (id: string) => void;
+}) {
+  const dead = mob.coarse === 'dead';
   const color = coarseColor(mob.coarse);
   return (
-    <div className="flex items-center gap-3 rounded-md border border-default bg-raised px-3 py-2">
-      <Icon className="size-5 shrink-0" style={{ color }} aria-hidden />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-text">{mob.label}</span>
-        <span className="text-[11px] uppercase tracking-wide text-faint">{mob.tier}</span>
-      </div>
-      <div className="flex flex-col items-end gap-1">
-        <span className="text-xs font-medium" style={{ color }}>
+    <div
+      className="rounded-[4px] border border-l-[3px] bg-panel px-[13px] py-[11px]"
+      style={{ borderColor: 'var(--color-default)', borderLeftColor: color, opacity: dead ? 0.62 : 1 }}
+    >
+      <div className="flex items-center gap-2.5">
+        <CoarseIcon coarse={mob.coarse} />
+        <span
+          className={cn(
+            'min-w-0 flex-1 truncate text-[14px] font-semibold text-text',
+            dead && 'line-through',
+          )}
+        >
+          {mob.label}
+        </span>
+        <span
+          className="shrink-0 font-display text-[9px] font-semibold uppercase tracking-[1px]"
+          style={{ color }}
+        >
           {coarseLabel(mob.coarse)}
         </span>
-        {mob.conditions.length > 0 && (
-          <div className="flex flex-wrap justify-end gap-1">
-            {mob.conditions.map((c, i) => (
-              <ConditionChip key={c.id + i} applied={c} onTap={() => onTapCondition(c.id)} />
-            ))}
-          </div>
-        )}
       </div>
+      {mob.conditions.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1 pl-[26px]">
+          {mob.conditions.map((c, i) => (
+            <ConditionChip key={c.id + i} applied={c} onTap={() => onTapCondition(c.id)} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -14,8 +14,8 @@ const COARSE_COLORS: Record<CoarseHp, string> = {
 
 const COARSE_LABELS: Record<CoarseHp, string> = {
   healthy: 'Healthy',
-  minor: 'Wounded',
-  gravely: 'Gravely wounded',
+  minor: 'Minor injury',
+  gravely: 'Gravely injured',
   dead: 'Dead',
 };
 
