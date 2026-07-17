@@ -6,6 +6,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { verifyToken } from '../auth/tokens';
 import type { TokenClaims } from '../domain/authz';
+import type { AppliedCondition } from '../domain/types';
 
 /** Player + GM token lifetime (§12/D13): 48h in seconds. */
 export const TOKEN_TTL_SECONDS = 48 * 60 * 60;
@@ -59,6 +60,31 @@ export function nowSec(): number {
 
 export function pathParam(event: APIGatewayProxyEventV2, key: string): string | undefined {
   return event.pathParameters?.[key];
+}
+
+/**
+ * Validate a conditions payload to well-shaped { id, rank? } entries (shape only — ids
+ * are NOT cross-checked against the catalog). Malformed entries (non-object / missing id)
+ * are dropped gracefully; a non-array top level is a 400; a non-integer rank is a 400.
+ * Shared by the player and mob PATCH handlers.
+ */
+export function normalizeConditions(input: unknown): AppliedCondition[] {
+  if (!Array.isArray(input)) throw badRequest('conditions must be an array');
+  const out: AppliedCondition[] = [];
+  for (const raw of input) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const { id, rank } = raw as { id?: unknown; rank?: unknown };
+    if (typeof id !== 'string' || id.length === 0) continue;
+    const entry: AppliedCondition = { id };
+    if (rank !== undefined) {
+      if (typeof rank !== 'number' || !Number.isInteger(rank)) {
+        throw badRequest('condition rank must be an integer');
+      }
+      entry.rank = rank;
+    }
+    out.push(entry);
+  }
+  return out;
 }
 
 /** Parse the JSON body (base64-decoding if flagged). Empty body → {}. Bad JSON → 400. */

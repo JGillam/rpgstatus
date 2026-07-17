@@ -7,7 +7,9 @@
 // mappers below STRIP those and return the pure domain shapes from ../domain/types,
 // so nothing leaks a secret hash or the raw ttl to a snapshot.
 
+import { randomUUID } from 'node:crypto';
 import {
+  DeleteCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -100,6 +102,7 @@ export interface LogItem extends Keyed {
 const pk = (code: string): string => `SESSION#${code}`;
 const metaKey = (code: string) => ({ PK: pk(code), SK: 'META' });
 const playerKey = (code: string, id: string) => ({ PK: pk(code), SK: `PLAYER#${id}` });
+const mobKey = (code: string, id: string) => ({ PK: pk(code), SK: `MOB#${id}` });
 const logKey = (code: string) => ({ PK: pk(code), SK: 'LOG' });
 
 // ---------------------------------------------------------------------------
@@ -169,6 +172,38 @@ export interface PlayerPatch {
   shock?: number;
   wrath?: number;
   status?: PlayerStatus;
+  actedThisRound?: boolean;
+  conditions?: AppliedCondition[];
+}
+
+/**
+ * Absolute-set patch for the session META (Phase-1 GM edit). Only provided keys are
+ * written. `chapterName` renames the nested settings.chapterName (read-modify-write).
+ */
+export interface SessionPatch {
+  glory?: number;
+  ruin?: number;
+  showRuin?: boolean;
+  round?: number;
+  state?: SessionState;
+  chapterName?: string;
+}
+
+/** Spec for creating a batch of identical mobs (hp starts at maxHp; revealed = !startsHidden). */
+export interface MobSpec {
+  label: string;
+  tier: MobTier;
+  maxHp: number;
+  startsHidden: boolean;
+}
+
+/** The subset of a Mob that a Phase-1 PATCH may set. Only provided keys are written. */
+export interface MobPatch {
+  label?: string;
+  tier?: MobTier;
+  maxHp?: number;
+  hp?: number;
+  revealed?: boolean;
   actedThisRound?: boolean;
   conditions?: AppliedCondition[];
 }
@@ -369,6 +404,90 @@ export class Repo {
     return this.getPlayer(code, playerId);
   }
 
+  // --- Rounds & session edits (Phase 1, GM-only) --------------------------
+
+  /**
+   * Next round (D15): clear actedThisRound on every PLAYER#/MOB# item in the partition,
+   * then atomically bump META.round (ADD). Returns the new round. TTL refreshed on every
+   * write. Uses one partition Query (§9.1) plus a per-item update.
+   */
+  async advanceRound(code: string): Promise<number> {
+    const ttl = this.ttlAt();
+    const out = await this.doc.send(
+      new QueryCommand({
+        TableName: this.table,
+        KeyConditionExpression: 'PK = :pk',
+        ExpressionAttributeValues: { ':pk': pk(code) },
+      }),
+    );
+    for (const it of (out.Items ?? []) as Array<Record<string, unknown>>) {
+      const sk = String(it.SK);
+      if (!sk.startsWith('PLAYER#') && !sk.startsWith('MOB#')) continue;
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.table,
+          Key: { PK: pk(code), SK: sk },
+          UpdateExpression: 'SET #acted = :false, #ttl = :ttl',
+          ExpressionAttributeNames: { '#acted': 'actedThisRound', '#ttl': 'ttl' },
+          ExpressionAttributeValues: { ':false': false, ':ttl': ttl },
+        }),
+      );
+    }
+    const bump = await this.doc.send(
+      new UpdateCommand({
+        TableName: this.table,
+        Key: metaKey(code),
+        UpdateExpression: 'SET #ttl = :ttl ADD #round :one',
+        ExpressionAttributeNames: { '#round': 'round', '#ttl': 'ttl' },
+        ExpressionAttributeValues: { ':one': 1, ':ttl': ttl },
+        ReturnValues: 'UPDATED_NEW',
+      }),
+    );
+    return Number(bump.Attributes?.round ?? 0);
+  }
+
+  /**
+   * Set absolute META fields (Phase-1 GM edit). Builds a SET over ONLY the provided keys
+   * (each aliased with a `#name`, so reserved words like `state`/`round` are safe),
+   * refreshes ttl, and guards with attribute_exists(SK). `chapterName` is merged into the
+   * nested settings map via read-modify-write (no dotted-path expression needed). Returns
+   * the re-read SessionMeta, or null if the session is gone.
+   */
+  async updateSession(code: string, patch: SessionPatch): Promise<SessionMeta | null> {
+    const names: Record<string, string> = { '#ttl': 'ttl' };
+    const values: Record<string, unknown> = { ':ttl': this.ttlAt() };
+    const sets: string[] = ['#ttl = :ttl'];
+
+    const simple = ['glory', 'ruin', 'showRuin', 'round', 'state'] as const;
+    for (const key of simple) {
+      const value = patch[key];
+      if (value === undefined) continue;
+      names[`#${key}`] = key;
+      values[`:${key}`] = value;
+      sets.push(`#${key} = :${key}`);
+    }
+
+    if (patch.chapterName !== undefined) {
+      const meta = await this.getMeta(code);
+      const settings: SessionSettings = { ...(meta?.settings ?? {}), chapterName: patch.chapterName };
+      names['#settings'] = 'settings';
+      values[':settings'] = settings;
+      sets.push('#settings = :settings');
+    }
+
+    await this.doc.send(
+      new UpdateCommand({
+        TableName: this.table,
+        Key: metaKey(code),
+        UpdateExpression: `SET ${sets.join(', ')}`,
+        ConditionExpression: 'attribute_exists(SK)',
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+      }),
+    );
+    return this.getMeta(code);
+  }
+
   // --- Counters (reused in Phase 1) --------------------------------------
 
   /** Glory +/- with a floor-0 conditional decrement (D16). Returns the resulting value. */
@@ -435,5 +554,99 @@ export class Repo {
         ExpressionAttributeValues: { ':empty': [], ':entry': [entry], ':ttl': this.ttlAt() },
       }),
     );
+  }
+
+  // --- Mobs (Phase 1, GM-only) -------------------------------------------
+
+  /** Raw MOB# item (with DB-only fields) — used by duplicateMob to copy combat state. */
+  async getMobRaw(code: string, mobId: string): Promise<MobItem | null> {
+    const out = await this.doc.send(new GetCommand({ TableName: this.table, Key: mobKey(code, mobId) }));
+    return (out.Item as MobItem | undefined) ?? null;
+  }
+
+  async getMob(code: string, mobId: string): Promise<Mob | null> {
+    const item = await this.getMobRaw(code, mobId);
+    return item ? toMob(item) : null;
+  }
+
+  /**
+   * Create `count` mobs from one spec (hp = maxHp, revealed = !startsHidden, no acted /
+   * conditions). Each gets a fresh uuid. Returns the created mobs in creation order.
+   */
+  async addMobs(code: string, spec: MobSpec, count: number): Promise<Mob[]> {
+    const ttl = this.ttlAt();
+    const created: Mob[] = [];
+    for (let i = 0; i < count; i++) {
+      const id = randomUUID();
+      const item: MobItem = {
+        ...mobKey(code, id),
+        id,
+        label: spec.label,
+        tier: spec.tier,
+        maxHp: spec.maxHp,
+        hp: spec.maxHp,
+        revealed: !spec.startsHidden,
+        actedThisRound: false,
+        conditions: [],
+        ttl,
+      };
+      await this.doc.send(new PutCommand({ TableName: this.table, Item: item }));
+      created.push(toMob(item));
+    }
+    return created;
+  }
+
+  /**
+   * Patch a mob's mutable fields (Phase 1). SET over ONLY the provided keys (each aliased,
+   * so reserved words are safe), refreshes ttl, guards with attribute_exists(SK). Returns
+   * the re-read Mob, or null if the item is gone (caller should have resolved it first).
+   */
+  async updateMob(code: string, mobId: string, patch: MobPatch): Promise<Mob | null> {
+    const names: Record<string, string> = { '#ttl': 'ttl' };
+    const values: Record<string, unknown> = { ':ttl': this.ttlAt() };
+    const sets: string[] = ['#ttl = :ttl'];
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) continue;
+      names[`#${key}`] = key;
+      values[`:${key}`] = value;
+      sets.push(`#${key} = :${key}`);
+    }
+    await this.doc.send(
+      new UpdateCommand({
+        TableName: this.table,
+        Key: mobKey(code, mobId),
+        UpdateExpression: `SET ${sets.join(', ')}`,
+        ConditionExpression: 'attribute_exists(SK)',
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+      }),
+    );
+    return this.getMob(code, mobId);
+  }
+
+  /** Hard-delete a mob (mobs are GM scratch state, not soft-tombstoned like players). */
+  async deleteMob(code: string, mobId: string): Promise<void> {
+    await this.doc.send(new DeleteCommand({ TableName: this.table, Key: mobKey(code, mobId) }));
+  }
+
+  /** Copy a mob to a NEW id, carrying over every combat field. Null if the source is gone. */
+  async duplicateMob(code: string, mobId: string): Promise<Mob | null> {
+    const src = await this.getMobRaw(code, mobId);
+    if (!src) return null;
+    const id = randomUUID();
+    const item: MobItem = {
+      ...mobKey(code, id),
+      id,
+      label: src.label,
+      tier: src.tier,
+      maxHp: src.maxHp,
+      hp: src.hp,
+      revealed: src.revealed,
+      actedThisRound: src.actedThisRound,
+      conditions: src.conditions ?? [],
+      ttl: this.ttlAt(),
+    };
+    await this.doc.send(new PutCommand({ TableName: this.table, Item: item }));
+    return toMob(item);
   }
 }

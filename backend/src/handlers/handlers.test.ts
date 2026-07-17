@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { signToken, verifyToken } from '../auth/tokens';
 import type { TokenClaims } from '../domain/authz';
-import type { GmSnapshot, LogEntry, MobPublicView, Player, PlayerSnapshot } from '../domain/types';
+import type { GmSnapshot, LogEntry, Mob, MobPublicView, Player, PlayerSnapshot, SessionMeta } from '../domain/types';
 import type { MobItem as MobDbItem } from '../data/repo';
 import { installDdbStore } from '../test-support/ddbStore';
 import { handler as createSession } from './createSession';
@@ -13,6 +13,11 @@ import { handler as kick } from './kick';
 import { handler as getState } from './getState';
 import { handler as glory } from './glory';
 import { handler as updatePlayer } from './updatePlayer';
+import { handler as ruin } from './ruin';
+import { handler as nextRound } from './nextRound';
+import { handler as updateSession } from './updateSession';
+import { handler as endSession } from './endSession';
+import { handler as mobs } from './mobs';
 import { sha256hex } from './http';
 
 const store = installDdbStore();
@@ -25,6 +30,8 @@ beforeEach(() => store.reset());
 function makeEvent(opts: {
   code?: string;
   playerId?: string;
+  mobId?: string;
+  method?: string;
   body?: unknown;
   token?: string;
   ifNoneMatch?: string;
@@ -35,6 +42,7 @@ function makeEvent(opts: {
   const pathParameters: Record<string, string> = {};
   if (opts.code) pathParameters.code = opts.code;
   if (opts.playerId) pathParameters.playerId = opts.playerId;
+  if (opts.mobId) pathParameters.mobId = opts.mobId;
   return {
     version: '2.0',
     routeKey: '$default',
@@ -42,6 +50,7 @@ function makeEvent(opts: {
     rawQueryString: '',
     headers,
     isBase64Encoded: false,
+    ...(opts.method ? { requestContext: { http: { method: opts.method } } } : {}),
     ...(Object.keys(pathParameters).length > 0 ? { pathParameters } : {}),
     ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
   } as unknown as APIGatewayProxyEventV2;
@@ -419,5 +428,195 @@ describe('PATCH /sessions/{code}/players/{playerId} (updatePlayer)', () => {
     expect(parse(await updatePlayer(makeEvent({ code, playerId, body: { wounds: 1 } }))).status).toBe(401);
     expect(parse(await updatePlayer(makeEvent({ code, playerId, token: 'garbage', body: { wounds: 1 } }))).status).toBe(401);
     expect(parse(await updatePlayer(makeEvent({ code, playerId: 'no-such-id', token: gmToken, body: { wounds: 1 } }))).status).toBe(404);
+  });
+});
+
+// --- ruin (GM-only) -------------------------------------------------------
+
+describe('POST /sessions/{code}/ruin (ruin)', () => {
+  it('is GM-only, floors at 0, and logs type R attributed to the GM', async () => {
+    const { code, gmToken, playerToken } = await admittedPlayer();
+
+    // A player token can never change Ruin (§4) → 403.
+    expect(parse(await ruin(makeEvent({ code, token: playerToken, body: { delta: 1 } }))).status).toBe(403);
+
+    // GM raises +2 → 2, lowers −1 → 1.
+    expect(parse(await ruin(makeEvent({ code, token: gmToken, body: { delta: 2 } }))).body).toEqual({ ruin: 2 });
+    expect(parse(await ruin(makeEvent({ code, token: gmToken, body: { delta: -1 } }))).body).toEqual({ ruin: 1 });
+    // A pull that would underflow is floored — value unchanged at 1 (D16).
+    expect(parse(await ruin(makeEvent({ code, token: gmToken, body: { delta: -5 } }))).body).toEqual({ ruin: 1 });
+
+    // Log: type 'R', actor index 0 (GM), in order.
+    const log = store.get(`SESSION#${code}`, 'LOG')!.e as LogEntry[];
+    expect(log[0]).toEqual([0, 2, 'R', expect.any(Number)]);
+    expect(log[1]).toEqual([0, -1, 'R', expect.any(Number)]);
+  });
+
+  it('401s a missing/invalid token and 400s a non-integer delta', async () => {
+    const { code, gmToken } = await admittedPlayer();
+    expect(parse(await ruin(makeEvent({ code, body: { delta: 1 } }))).status).toBe(401);
+    expect(parse(await ruin(makeEvent({ code, token: 'not.a.token', body: { delta: 1 } }))).status).toBe(401);
+    expect(parse(await ruin(makeEvent({ code, token: gmToken, body: { delta: 1.5 } }))).status).toBe(400);
+  });
+});
+
+// --- nextRound (GM-only) --------------------------------------------------
+
+describe('POST /sessions/{code}/round/next (nextRound)', () => {
+  it('is GM-only, clears acted on every player + mob, and bumps the round', async () => {
+    const { code, gmToken, playerId, playerToken } = await admittedPlayer();
+    // Mark the player + two mobs as having acted this round.
+    await updatePlayer(makeEvent({ code, playerId, token: gmToken, body: { actedThisRound: true } }));
+    seedMob(code, { id: 'm1', actedThisRound: true });
+    seedMob(code, { id: 'm2', actedThisRound: true, revealed: false });
+
+    // Advancing the round is GM-only (§4) → player 403.
+    expect(parse(await nextRound(makeEvent({ code, token: playerToken }))).status).toBe(403);
+
+    const res = parse(await nextRound(makeEvent({ code, token: gmToken })));
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ round: 2 }); // session started at round 1
+
+    // Every acted flag is cleared and the round is persisted.
+    expect(store.get(`SESSION#${code}`, `PLAYER#${playerId}`)!.actedThisRound).toBe(false);
+    expect(store.get(`SESSION#${code}`, 'MOB#m1')!.actedThisRound).toBe(false);
+    expect(store.get(`SESSION#${code}`, 'MOB#m2')!.actedThisRound).toBe(false);
+    expect(store.get(`SESSION#${code}`, 'META')!.round).toBe(2);
+  });
+});
+
+// --- updateSession (GM-only) ----------------------------------------------
+
+describe('PATCH /sessions/{code} (updateSession)', () => {
+  it('is GM-only and sets showRuin / glory / ruin / round + renames the chapter', async () => {
+    const { code, gmToken, playerToken } = await admittedPlayer();
+
+    // Editing session meta is GM-only (§4) → player 403.
+    expect(parse(await updateSession(makeEvent({ code, token: playerToken, body: { showRuin: true } }))).status).toBe(403);
+
+    const res = parse(
+      await updateSession(
+        makeEvent({
+          code,
+          token: gmToken,
+          body: { glory: 4, ruin: 3, showRuin: true, round: 7, chapterName: 'Second Chapter' },
+        }),
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.session as SessionMeta).toMatchObject({
+      glory: 4,
+      ruin: 3,
+      showRuin: true,
+      round: 7,
+      settings: { chapterName: 'Second Chapter' },
+    });
+
+    // Absolute sets are floored: glory/ruin ≥ 0, round ≥ 1.
+    const clamped = parse(
+      await updateSession(makeEvent({ code, token: gmToken, body: { glory: -3, ruin: -1, round: 0 } })),
+    );
+    expect(clamped.body.session as SessionMeta).toMatchObject({ glory: 0, ruin: 0, round: 1 });
+  });
+});
+
+// --- endSession (GM-only) -------------------------------------------------
+
+describe('POST /sessions/{code}/end (endSession)', () => {
+  it('is GM-only and sets state to ended', async () => {
+    const { code, gmToken, playerToken } = await admittedPlayer();
+    expect(parse(await endSession(makeEvent({ code, token: playerToken }))).status).toBe(403);
+
+    const res = parse(await endSession(makeEvent({ code, token: gmToken })));
+    expect(res.body).toEqual({ ok: true, state: 'ended' });
+    expect(store.get(`SESSION#${code}`, 'META')!.state).toBe('ended');
+  });
+});
+
+// --- mobs (GM-only: add / patch / duplicate / delete) ---------------------
+
+describe('mobs (POST / PATCH / DELETE / duplicate)', () => {
+  /** Create mobs via the handler and return the created array. */
+  async function addMobs(code: string, gmToken: string, body: unknown) {
+    const res = parse(await mobs(makeEvent({ code, method: 'POST', token: gmToken, body })));
+    expect(res.status).toBe(200);
+    return res.body.mobs as Mob[];
+  }
+
+  it('POST adds N mobs (count clamped to 8); startsHidden → revealed false; player 403', async () => {
+    const { code, gmToken, playerToken } = await admittedPlayer();
+
+    // Mob management is GM-only (§4) → player 403.
+    expect(parse(await mobs(makeEvent({ code, method: 'POST', token: playerToken, body: { count: 2 } }))).status).toBe(403);
+
+    const created = await addMobs(code, gmToken, {
+      label: 'Ork Boy',
+      tier: 'Elite',
+      maxHp: 10,
+      count: 99, // over the cap
+      startsHidden: true,
+    });
+    expect(created).toHaveLength(8); // clamped 99 → LIMITS.addMobCount.max
+    for (const m of created) {
+      expect(m).toMatchObject({
+        label: 'Ork Boy',
+        tier: 'Elite',
+        maxHp: 10,
+        hp: 10, // hp starts at maxHp
+        revealed: false, // startsHidden → not revealed
+        actedThisRound: false,
+        conditions: [],
+      });
+    }
+    // Eight distinct MOB# items were persisted.
+    const stored = store.all().filter((i) => String(i.SK).startsWith('MOB#'));
+    expect(stored).toHaveLength(8);
+    expect(new Set(created.map((m) => m.id)).size).toBe(8);
+  });
+
+  it('PATCH clamps hp to the new maxHp and renames; DELETE removes; both are GM-only', async () => {
+    const { code, gmToken, playerToken } = await admittedPlayer();
+    const [mob] = await addMobs(code, gmToken, { maxHp: 6, count: 1 });
+    const mobId = mob!.id;
+
+    // Player is denied on every mutating op → 403.
+    expect(parse(await mobs(makeEvent({ code, mobId, method: 'PATCH', token: playerToken, body: { hp: 1 } }))).status).toBe(403);
+    expect(parse(await mobs(makeEvent({ code, mobId, method: 'DELETE', token: playerToken }))).status).toBe(403);
+
+    // hp over the (new) max clamps to it; label renamed.
+    const patched = parse(
+      await mobs(makeEvent({ code, mobId, method: 'PATCH', token: gmToken, body: { label: 'Nob', maxHp: 8, hp: 100 } })),
+    );
+    expect(patched.status).toBe(200);
+    expect(patched.body.mob as Mob).toMatchObject({ label: 'Nob', maxHp: 8, hp: 8 });
+
+    // Delete removes the item.
+    const del = parse(await mobs(makeEvent({ code, mobId, method: 'DELETE', token: gmToken })));
+    expect(del.body).toEqual({ ok: true });
+    expect(store.get(`SESSION#${code}`, `MOB#${mobId}`)).toBeUndefined();
+  });
+
+  it('POST /{mobId}/duplicate copies the mob (incl. live hp) to a new id; player 403', async () => {
+    const { code, gmToken, playerToken } = await admittedPlayer();
+    const [src] = await addMobs(code, gmToken, { label: 'Grot', maxHp: 5, count: 1, startsHidden: false });
+    const mobId = src!.id;
+    // Damage it, so we can confirm the copy carries the current hp, not maxHp.
+    await mobs(makeEvent({ code, mobId, method: 'PATCH', token: gmToken, body: { hp: 2 } }));
+
+    expect(parse(await mobs(makeEvent({ code, mobId, method: 'POST', token: playerToken }))).status).toBe(403);
+
+    const dup = parse(await mobs(makeEvent({ code, mobId, method: 'POST', token: gmToken })));
+    expect(dup.status).toBe(200);
+    const copy = dup.body.mob as Mob;
+    expect(copy.id).not.toBe(mobId);
+    expect(copy).toMatchObject({ label: 'Grot', maxHp: 5, hp: 2, revealed: true });
+    // Two mobs now exist (source + copy).
+    expect(store.all().filter((i) => String(i.SK).startsWith('MOB#'))).toHaveLength(2);
+  });
+
+  it('404s a PATCH/duplicate on an unknown mob', async () => {
+    const { code, gmToken } = await admittedPlayer();
+    expect(parse(await mobs(makeEvent({ code, mobId: 'ghost', method: 'PATCH', token: gmToken, body: { hp: 1 } }))).status).toBe(404);
+    expect(parse(await mobs(makeEvent({ code, mobId: 'ghost', method: 'POST', token: gmToken }))).status).toBe(404);
   });
 });

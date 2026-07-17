@@ -93,10 +93,29 @@ export class WgStack extends cdk.Stack {
     const getStateFn = makeHandler('getState');
     const gloryFn = makeHandler('glory');
     const updatePlayerFn = makeHandler('updatePlayer');
+    // Phase-1 GM mutation handlers.
+    const ruinFn = makeHandler('ruin');
+    const nextRoundFn = makeHandler('nextRound');
+    const updateSessionFn = makeHandler('updateSession');
+    const endSessionFn = makeHandler('endSession');
+    const mobsFn = makeHandler('mobs');
 
     // getState only reads the table; the mutating handlers read + write.
     table.grantReadData(getStateFn);
-    for (const fn of [createSessionFn, joinSessionFn, claimFn, admitFn, kickFn, gloryFn, updatePlayerFn]) {
+    for (const fn of [
+      createSessionFn,
+      joinSessionFn,
+      claimFn,
+      admitFn,
+      kickFn,
+      gloryFn,
+      updatePlayerFn,
+      ruinFn,
+      nextRoundFn,
+      updateSessionFn,
+      endSessionFn,
+      mobsFn,
+    ]) {
       table.grantReadWriteData(fn);
     }
 
@@ -109,6 +128,7 @@ export class WgStack extends cdk.Stack {
           apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.POST,
           apigwv2.CorsHttpMethod.PATCH,
+          apigwv2.CorsHttpMethod.DELETE,
           apigwv2.CorsHttpMethod.OPTIONS,
         ],
         allowHeaders: ['Authorization', 'Content-Type'],
@@ -141,6 +161,21 @@ export class WgStack extends cdk.Stack {
         'IntUpdatePlayer',
       ),
       ...addRoute('/state/{code}', apigwv2.HttpMethod.GET, getStateFn, 'IntGetState'),
+      // Phase-1 GM mutations.
+      ...addRoute('/sessions/{code}/ruin', apigwv2.HttpMethod.POST, ruinFn, 'IntRuin'),
+      ...addRoute('/sessions/{code}/round/next', apigwv2.HttpMethod.POST, nextRoundFn, 'IntNextRound'),
+      ...addRoute('/sessions/{code}', apigwv2.HttpMethod.PATCH, updateSessionFn, 'IntUpdateSession'),
+      ...addRoute('/sessions/{code}/end', apigwv2.HttpMethod.POST, endSessionFn, 'IntEndSession'),
+      // Four mob routes → the SAME mobs fn (each integration gets a unique id).
+      ...addRoute('/sessions/{code}/mobs', apigwv2.HttpMethod.POST, mobsFn, 'IntMobsCreate'),
+      ...addRoute('/sessions/{code}/mobs/{mobId}', apigwv2.HttpMethod.PATCH, mobsFn, 'IntMobsPatch'),
+      ...addRoute('/sessions/{code}/mobs/{mobId}', apigwv2.HttpMethod.DELETE, mobsFn, 'IntMobsDelete'),
+      ...addRoute(
+        '/sessions/{code}/mobs/{mobId}/duplicate',
+        apigwv2.HttpMethod.POST,
+        mobsFn,
+        'IntMobsDuplicate',
+      ),
     ];
 
     // Throttling (D12): a default cap, plus stricter caps on the uncacheable, abusable

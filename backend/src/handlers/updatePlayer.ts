@@ -7,7 +7,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { authorize } from '../domain/authz';
 import { clampCurrent, clampWrath } from '../domain/logic';
-import type { AppliedCondition, PlayerStatus } from '../domain/types';
+import type { PlayerStatus } from '../domain/types';
 import { docClient } from '../data/client';
 import { Repo, type PlayerPatch } from '../data/repo';
 import {
@@ -15,6 +15,7 @@ import {
   errorResult,
   forbidden,
   json,
+  normalizeConditions,
   notFound,
   parseJson,
   pathParam,
@@ -31,30 +32,6 @@ interface UpdateBody {
   status?: unknown;
   actedThisRound?: unknown;
   conditions?: unknown;
-}
-
-/**
- * Validate a conditions payload to well-shaped { id, rank? } entries. Shape only —
- * unknown ids are NOT cross-checked against the catalog; malformed entries (non-object
- * / missing id) are dropped gracefully. A non-array top level is a 400.
- */
-function normalizeConditions(input: unknown): AppliedCondition[] {
-  if (!Array.isArray(input)) throw badRequest('conditions must be an array');
-  const out: AppliedCondition[] = [];
-  for (const raw of input) {
-    if (typeof raw !== 'object' || raw === null) continue;
-    const { id, rank } = raw as { id?: unknown; rank?: unknown };
-    if (typeof id !== 'string' || id.length === 0) continue;
-    const entry: AppliedCondition = { id };
-    if (rank !== undefined) {
-      if (typeof rank !== 'number' || !Number.isInteger(rank)) {
-        throw badRequest('condition rank must be an integer');
-      }
-      entry.rank = rank;
-    }
-    out.push(entry);
-  }
-  return out;
 }
 
 export const handler = async (
