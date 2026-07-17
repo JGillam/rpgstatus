@@ -91,10 +91,12 @@ export class WgStack extends cdk.Stack {
     const admitFn = makeHandler('admit');
     const kickFn = makeHandler('kick');
     const getStateFn = makeHandler('getState');
+    const gloryFn = makeHandler('glory');
+    const updatePlayerFn = makeHandler('updatePlayer');
 
-    // getState only reads the table; the five mutating handlers read + write.
+    // getState only reads the table; the mutating handlers read + write.
     table.grantReadData(getStateFn);
-    for (const fn of [createSessionFn, joinSessionFn, claimFn, admitFn, kickFn]) {
+    for (const fn of [createSessionFn, joinSessionFn, claimFn, admitFn, kickFn, gloryFn, updatePlayerFn]) {
       table.grantReadWriteData(fn);
     }
 
@@ -106,6 +108,7 @@ export class WgStack extends cdk.Stack {
         allowMethods: [
           apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.POST,
+          apigwv2.CorsHttpMethod.PATCH,
           apigwv2.CorsHttpMethod.OPTIONS,
         ],
         allowHeaders: ['Authorization', 'Content-Type'],
@@ -130,6 +133,13 @@ export class WgStack extends cdk.Stack {
       ...addRoute('/sessions/{code}/claim', apigwv2.HttpMethod.POST, claimFn, 'IntClaim'),
       ...addRoute('/sessions/{code}/admit', apigwv2.HttpMethod.POST, admitFn, 'IntAdmit'),
       ...addRoute('/sessions/{code}/kick', apigwv2.HttpMethod.POST, kickFn, 'IntKick'),
+      ...addRoute('/sessions/{code}/glory', apigwv2.HttpMethod.POST, gloryFn, 'IntGlory'),
+      ...addRoute(
+        '/sessions/{code}/players/{playerId}',
+        apigwv2.HttpMethod.PATCH,
+        updatePlayerFn,
+        'IntUpdatePlayer',
+      ),
       ...addRoute('/state/{code}', apigwv2.HttpMethod.GET, getStateFn, 'IntGetState'),
     ];
 

@@ -163,6 +163,16 @@ export interface Hydrated {
   log: LogEntry[];
 }
 
+/** The subset of a Player that a Phase-1 PATCH may set. Only provided keys are written. */
+export interface PlayerPatch {
+  wounds?: number;
+  shock?: number;
+  wrath?: number;
+  status?: PlayerStatus;
+  actedThisRound?: boolean;
+  conditions?: AppliedCondition[];
+}
+
 // ---------------------------------------------------------------------------
 // Repo — thin wrapper over a DynamoDBDocumentClient for one table.
 // ---------------------------------------------------------------------------
@@ -327,6 +337,36 @@ export class Repo {
   async getPlayer(code: string, playerId: string): Promise<Player | null> {
     const item = await this.getPlayerRaw(code, playerId);
     return item ? toPlayer(item) : null;
+  }
+
+  /**
+   * Patch a player's mutable fields (Phase 1). Builds a SET over ONLY the provided
+   * keys (each aliased with a `#name`, so reserved words like `status` are safe),
+   * refreshes ttl, and guards with `attribute_exists(SK)` so a stray write can never
+   * conjure a phantom player. Returns the updated mapped Player (re-get), or null if
+   * the item is gone. Callers should have already resolved the target via getPlayer.
+   */
+  async updatePlayer(code: string, playerId: string, patch: PlayerPatch): Promise<Player | null> {
+    const names: Record<string, string> = { '#ttl': 'ttl' };
+    const values: Record<string, unknown> = { ':ttl': this.ttlAt() };
+    const sets: string[] = ['#ttl = :ttl'];
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) continue;
+      names[`#${key}`] = key;
+      values[`:${key}`] = value;
+      sets.push(`#${key} = :${key}`);
+    }
+    await this.doc.send(
+      new UpdateCommand({
+        TableName: this.table,
+        Key: playerKey(code, playerId),
+        UpdateExpression: `SET ${sets.join(', ')}`,
+        ConditionExpression: 'attribute_exists(SK)',
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+      }),
+    );
+    return this.getPlayer(code, playerId);
   }
 
   // --- Counters (reused in Phase 1) --------------------------------------

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { signToken, verifyToken } from '../auth/tokens';
 import type { TokenClaims } from '../domain/authz';
-import type { GmSnapshot, MobPublicView, PlayerSnapshot } from '../domain/types';
+import type { GmSnapshot, LogEntry, MobPublicView, Player, PlayerSnapshot } from '../domain/types';
 import type { MobItem as MobDbItem } from '../data/repo';
 import { installDdbStore } from '../test-support/ddbStore';
 import { handler as createSession } from './createSession';
@@ -11,6 +11,8 @@ import { handler as claim } from './claim';
 import { handler as admit } from './admit';
 import { handler as kick } from './kick';
 import { handler as getState } from './getState';
+import { handler as glory } from './glory';
+import { handler as updatePlayer } from './updatePlayer';
 import { sha256hex } from './http';
 
 const store = installDdbStore();
@@ -22,6 +24,7 @@ beforeEach(() => store.reset());
 
 function makeEvent(opts: {
   code?: string;
+  playerId?: string;
   body?: unknown;
   token?: string;
   ifNoneMatch?: string;
@@ -29,6 +32,9 @@ function makeEvent(opts: {
   const headers: Record<string, string> = {};
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.ifNoneMatch) headers['if-none-match'] = opts.ifNoneMatch;
+  const pathParameters: Record<string, string> = {};
+  if (opts.code) pathParameters.code = opts.code;
+  if (opts.playerId) pathParameters.playerId = opts.playerId;
   return {
     version: '2.0',
     routeKey: '$default',
@@ -36,7 +42,7 @@ function makeEvent(opts: {
     rawQueryString: '',
     headers,
     isBase64Encoded: false,
-    ...(opts.code ? { pathParameters: { code: opts.code } } : {}),
+    ...(Object.keys(pathParameters).length > 0 ? { pathParameters } : {}),
     ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
   } as unknown as APIGatewayProxyEventV2;
 }
@@ -317,5 +323,101 @@ describe('GET /state/{code} (getState)', () => {
     const second = parse(await getState(makeEvent({ code, token: gmToken, ifNoneMatch: etag })));
     expect(second.status).toBe(304);
     expect(second.body).toBeUndefined();
+  });
+});
+
+// --- glory ----------------------------------------------------------------
+
+describe('POST /sessions/{code}/glory (glory)', () => {
+  it('pushes/pulls, floors at 0, and logs each change attributed to the actor', async () => {
+    const { code, gmToken, playerToken } = await admittedPlayer();
+
+    // Player pushes +1 → 1, logged under the player's index (1).
+    const p1 = parse(await glory(makeEvent({ code, token: playerToken, body: { delta: 1 } })));
+    expect(p1.status).toBe(200);
+    expect(p1.body).toEqual({ glory: 1 });
+
+    // GM pushes +1 → 2, logged under index 0.
+    const g1 = parse(await glory(makeEvent({ code, token: gmToken, body: { delta: 1 } })));
+    expect(g1.body).toEqual({ glory: 2 });
+
+    // GM pulls −1 twice → 1 → 0.
+    expect(parse(await glory(makeEvent({ code, token: gmToken, body: { delta: -1 } }))).body).toEqual({ glory: 1 });
+    expect(parse(await glory(makeEvent({ code, token: gmToken, body: { delta: -1 } }))).body).toEqual({ glory: 0 });
+
+    // A further pull cannot go negative — floored, value unchanged at 0 (D16).
+    expect(parse(await glory(makeEvent({ code, token: gmToken, body: { delta: -1 } }))).body).toEqual({ glory: 0 });
+
+    // Log attribution: player push = index 1, GM push = index 0; both type 'G'.
+    const log = store.get(`SESSION#${code}`, 'LOG')!.e as LogEntry[];
+    expect(log[0]).toEqual([1, 1, 'G', expect.any(Number)]);
+    expect(log[1]).toEqual([0, 1, 'G', expect.any(Number)]);
+    expect(log[2]).toEqual([0, -1, 'G', expect.any(Number)]);
+  });
+
+  it('rejects a missing/invalid token with 401 and a non-integer delta with 400', async () => {
+    const { code, gmToken } = await admittedPlayer();
+    expect(parse(await glory(makeEvent({ code, body: { delta: 1 } }))).status).toBe(401);
+    expect(parse(await glory(makeEvent({ code, token: 'not.a.token', body: { delta: 1 } }))).status).toBe(401);
+    expect(parse(await glory(makeEvent({ code, token: gmToken, body: { delta: 1.5 } }))).status).toBe(400);
+  });
+});
+
+// --- updatePlayer ---------------------------------------------------------
+
+describe('PATCH /sessions/{code}/players/{playerId} (updatePlayer)', () => {
+  it('lets the owner edit their own character (clamps wounds/shock/wrath, status, acted, conditions)', async () => {
+    const { code, playerId, playerToken } = await admittedPlayer();
+
+    // Defaults: maxWounds 12, maxShock 6, wrath 0..6. Over-max inputs clamp to the max.
+    const res = parse(
+      await updatePlayer(
+        makeEvent({
+          code,
+          playerId,
+          token: playerToken,
+          body: {
+            wounds: 100,
+            shock: 100,
+            wrath: 99,
+            status: 'down',
+            actedThisRound: true,
+            conditions: [{ id: 'bleeding', rank: 2 }, { id: 'prone' }],
+          },
+        }),
+      ),
+    );
+    expect(res.status).toBe(200);
+    const p = res.body.player as Player;
+    expect(p.wounds).toBe(12); // clamped to maxWounds
+    expect(p.shock).toBe(6); // clamped to maxShock
+    expect(p.wrath).toBe(6); // clamped to 6
+    expect(p.status).toBe('down');
+    expect(p.actedThisRound).toBe(true);
+    expect(p.conditions).toEqual([{ id: 'bleeding', rank: 2 }, { id: 'prone' }]);
+
+    // A negative current clamps to the 0 floor.
+    const low = parse(await updatePlayer(makeEvent({ code, playerId, token: playerToken, body: { wounds: -5 } })));
+    expect((low.body.player as Player).wounds).toBe(0);
+  });
+
+  it("rejects a different player's token with 403 but lets the GM edit anyone", async () => {
+    const { code, gmToken, playerId } = await admittedPlayer();
+
+    // A token for a *different* player (index 2) may not edit player index 1.
+    const otherTok = sign({ code, role: 'player', playerIndex: 2, exp: nowSec() + 3600 });
+    expect(parse(await updatePlayer(makeEvent({ code, playerId, token: otherTok, body: { wounds: 5 } }))).status).toBe(403);
+
+    // The GM can edit any character.
+    const gmRes = parse(await updatePlayer(makeEvent({ code, playerId, token: gmToken, body: { status: 'dead' } })));
+    expect(gmRes.status).toBe(200);
+    expect((gmRes.body.player as Player).status).toBe('dead');
+  });
+
+  it('401s an invalid/missing token and 404s an unknown player', async () => {
+    const { code, gmToken, playerId } = await admittedPlayer();
+    expect(parse(await updatePlayer(makeEvent({ code, playerId, body: { wounds: 1 } }))).status).toBe(401);
+    expect(parse(await updatePlayer(makeEvent({ code, playerId, token: 'garbage', body: { wounds: 1 } }))).status).toBe(401);
+    expect(parse(await updatePlayer(makeEvent({ code, playerId: 'no-such-id', token: gmToken, body: { wounds: 1 } }))).status).toBe(404);
   });
 });
