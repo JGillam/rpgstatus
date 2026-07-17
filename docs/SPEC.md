@@ -1,7 +1,6 @@
 # Wrath & Glory Session Assistant — Design Spec
 
-**Status:** v0.5 — decision rounds 1–4 folded in; rounds 3–4 capture the Claude Design review (GM
-Console + Player Screen, then Entry/Join, GM Setup & GM Console v2).
+**Status:** v0.6 — rounds 1–5 folded in; rounds 3–4 = Claude Design review, round 5 = domain & hosting.
 **Last updated:** 2026-07-17
 
 ---
@@ -71,6 +70,11 @@ bar on **abuse resistance**.
 | D22 | **Sessions are live from creation.** Drop the `lobby` session state — admission is **continuous** via the lobby panel. **`SessionState = active \| ended`** (persisted); **`expired`** is client-derived when the session item is gone (TTL). |
 | D23 | **Settings + validation limits.** `settings.chapterName?` (≤48; blank → "Untitled chapter"). Central limits: display name 1–24 (required); max Wounds 1–40; max Shock 1–20; Wrath 0–6; Glory/Ruin ≥0; mob maxHp ≥1; add-mob count 1–8; join code 5× `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`. |
 | D24 | **Batch add-mob.** Add-mob takes a **`count` (1–8)** and writes **N individual `MOB#` items** (per-mob tracking, D5); Mob shape unchanged. Inline rename edits **`label` only**. |
+
+### Round 5 (2026-07-17) — Domain & hosting
+| # | Decision |
+|---|---|
+| D25 | **Domain = `rpgstatus.com`** (newly registered; Route 53 hosted zone already exists in the `jason-deploy` account). The app is served at **`wrathandglory.rpgstatus.com`**; the **apex `rpgstatus.com` redirects** (temporary **302** — the apex may later become a multi-game hub) to that host. **ACM cert (us-east-1)** covers `rpgstatus.com` + **`*.rpgstatus.com`** (wildcard future-proofs one subdomain per game, deferred). Redirect implemented with the CDK **`HttpsRedirect`** (`aws-route53-patterns`) construct. Wired in step 3 (infra). |
 
 ---
 
@@ -448,7 +452,8 @@ Scale-to-zero; **fractions of a cent per session** (§9.3), cheap even public:
 - **CloudFront + S3 + CloudFront Function:** pennies/month; CF Function invocations ≈ $0.10/M.
 - **~100 concurrent public sessions, edge-cached:** on the order of **cents** in reads+writes.
 - **Optional WAF:** ~$6/mo base **only if** enabled.
-- **Custom domain:** none yet (CloudFront URL); ~$0.50/mo hosted zone + registration if added.
+- **Custom domain:** `rpgstatus.com` registered + Route 53 hosted zone (~$0.50/mo); ACM certs are
+  free; the apex 302 redirect adds a tiny S3+CloudFront (pennies).
 
 **Expected: within/near free tier for hobby use**; low single-digit $/month even with modest public
 traffic (WAF is the main thing that would move the needle).
@@ -459,6 +464,10 @@ traffic (WAF is the main thing that would move the needle).
 
 - **IaC:** AWS **CDK (TypeScript)**, single stack (S3+CloudFront[+CF Function][+WAF], API GW HTTP API,
   Lambda, DynamoDB), **us-east-1**.
+- **Domain/DNS (D25):** **`rpgstatus.com`** in Route 53 (existing hosted zone, `jason-deploy` account);
+  app host **`wrathandglory.rpgstatus.com`** as a CloudFront alternate domain; **ACM cert us-east-1**
+  for `rpgstatus.com` + `*.rpgstatus.com`; **apex → app** 302 redirect via `HttpsRedirect`
+  (`aws-route53-patterns`). Future games = sibling `<game>.rpgstatus.com` hosts (deferred).
 - **Frontend:** **React + Vite + shadcn/ui + Tailwind**; mobile-first player app + responsive GM
   console; built assets → S3 → CloudFront.
 - **Backend:** **TypeScript Lambda**; shared domain types (`Session`/`Player`/`Mob`/`LogEntry`) with
