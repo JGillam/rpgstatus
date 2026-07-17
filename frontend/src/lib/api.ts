@@ -5,10 +5,13 @@
 import type {
   AppliedCondition,
   GmSnapshot,
+  Mob,
+  MobTier,
   Player,
   PlayerPresence,
   PlayerSnapshot,
   PlayerStatus,
+  SessionMeta,
 } from '@domain';
 
 /** Base for every request. Empty string = same-origin. */
@@ -212,4 +215,106 @@ export function updatePlayer(
     token,
     body: JSON.stringify(patch),
   });
+}
+
+// ---- GM mutations (Phase 2 — Bearer GM token) ------------------------------
+
+/** Fields the GM may PATCH on session meta (all optional; server clamps/validates). */
+export interface SessionPatch {
+  glory?: number;
+  ruin?: number;
+  showRuin?: boolean;
+  round?: number;
+  chapterName?: string;
+}
+
+/** Fields the GM may PATCH on a mob (all optional; server clamps/validates). */
+export interface MobPatch {
+  label?: string;
+  tier?: MobTier;
+  maxHp?: number;
+  hp?: number;
+  revealed?: boolean;
+  actedThisRound?: boolean;
+  conditions?: AppliedCondition[];
+}
+
+/** Body for the add-mob dialog (POST /mobs). `count` mobs are created at once (D18). */
+export interface AddMobsInput {
+  label: string;
+  tier: MobTier;
+  maxHp: number;
+  count: number;
+  startsHidden: boolean;
+}
+
+/** POST /sessions/{code}/ruin — raise (+) / lower (−) Ruin. Returns the new total. */
+export function adjustRuin(code: string, token: string, delta: number): Promise<{ ruin: number }> {
+  return request(`/sessions/${encodeURIComponent(code)}/ruin`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ delta }),
+  });
+}
+
+/** PATCH /sessions/{code} — set-value edits to session meta (glory/ruin/showRuin/round/…). */
+export function updateSession(
+  code: string,
+  token: string,
+  patch: SessionPatch,
+): Promise<{ session: SessionMeta }> {
+  return request(`/sessions/${encodeURIComponent(code)}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(patch),
+  });
+}
+
+/** POST /sessions/{code}/round/next — bump the round and clear every acted flag (D15). */
+export function nextRound(code: string, token: string): Promise<{ round: number }> {
+  return request(`/sessions/${encodeURIComponent(code)}/round/next`, { method: 'POST', token });
+}
+
+/** POST /sessions/{code}/end — mark the session ended (D22). */
+export function endSession(code: string, token: string): Promise<{ ok: true }> {
+  return request(`/sessions/${encodeURIComponent(code)}/end`, { method: 'POST', token });
+}
+
+/** POST /sessions/{code}/mobs — create `count` mobs from a spec. Returns the new mobs. */
+export function addMobs(code: string, token: string, spec: AddMobsInput): Promise<{ mobs: Mob[] }> {
+  return request(`/sessions/${encodeURIComponent(code)}/mobs`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(spec),
+  });
+}
+
+/** PATCH /sessions/{code}/mobs/{mobId} — edit one mob (hp, label, revealed, …). */
+export function updateMob(
+  code: string,
+  token: string,
+  mobId: string,
+  patch: MobPatch,
+): Promise<{ mob: Mob }> {
+  return request(`/sessions/${encodeURIComponent(code)}/mobs/${encodeURIComponent(mobId)}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(patch),
+  });
+}
+
+/** DELETE /sessions/{code}/mobs/{mobId} — remove a mob from the board. */
+export function deleteMob(code: string, token: string, mobId: string): Promise<{ ok: true }> {
+  return request(`/sessions/${encodeURIComponent(code)}/mobs/${encodeURIComponent(mobId)}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+/** POST /sessions/{code}/mobs/{mobId}/duplicate — clone a mob (fresh id, full HP). */
+export function duplicateMob(code: string, token: string, mobId: string): Promise<{ mob: Mob }> {
+  return request(
+    `/sessions/${encodeURIComponent(code)}/mobs/${encodeURIComponent(mobId)}/duplicate`,
+    { method: 'POST', token },
+  );
 }
