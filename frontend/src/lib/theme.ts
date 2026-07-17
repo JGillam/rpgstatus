@@ -3,7 +3,7 @@
 // arbitrary Tailwind values (e.g. text-[var(--color-healthy)]). Used by the GM/player
 // screens built in later steps.
 
-import type { CoarseHp, PlayerStatus } from '@domain';
+import type { CoarseHp, ConditionCategory, PlayerStatus } from '@domain';
 
 const COARSE_COLORS: Record<CoarseHp, string> = {
   healthy: 'var(--color-healthy)',
@@ -35,7 +35,16 @@ const STATUS_LABELS: Record<PlayerStatus, string> = {
   stable: 'Stable',
 };
 
+// Condition-chip theming (D19): damage = ongoing harm, affliction = mind/toxin,
+// impairment = restrictions/penalties.
+const CONDITION_COLORS: Record<ConditionCategory, string> = {
+  damage: 'var(--color-red)',
+  affliction: 'var(--color-violet)',
+  impairment: 'var(--color-blue)',
+};
+
 export const coarseColor = (c: CoarseHp): string => COARSE_COLORS[c];
 export const coarseLabel = (c: CoarseHp): string => COARSE_LABELS[c];
 export const statusColor = (s: PlayerStatus): string => STATUS_COLORS[s];
 export const statusLabel = (s: PlayerStatus): string => STATUS_LABELS[s];
+export const conditionColor = (c: ConditionCategory): string => CONDITION_COLORS[c];

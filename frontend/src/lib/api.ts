@@ -2,7 +2,14 @@
 // or '' (same-origin) — the deployed SPA reaches the API through CloudFront, and local
 // dev goes through the Vite proxy (see vite.config.ts). All bodies are JSON.
 
-import type { GmSnapshot, PlayerPresence, PlayerSnapshot } from '@domain';
+import type {
+  AppliedCondition,
+  GmSnapshot,
+  Player,
+  PlayerPresence,
+  PlayerSnapshot,
+  PlayerStatus,
+} from '@domain';
 
 /** Base for every request. Empty string = same-origin. */
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '';
@@ -170,4 +177,39 @@ export async function getState<T extends GmSnapshot | PlayerSnapshot = GmSnapsho
   }
   const snapshot = (await res.json()) as T;
   return { snapshot, etag: res.headers.get('etag'), notModified: false };
+}
+
+// ---- Player mutations (Phase 1) --------------------------------------------
+
+/** Fields a player may PATCH on their own card (all optional; server clamps/validates). */
+export interface PlayerPatch {
+  wounds?: number;
+  shock?: number;
+  wrath?: number;
+  status?: PlayerStatus;
+  actedThisRound?: boolean;
+  conditions?: AppliedCondition[];
+}
+
+/** POST /sessions/{code}/glory — push (+) / pull (−) shared Glory. Returns the new total. */
+export function adjustGlory(code: string, token: string, delta: number): Promise<{ glory: number }> {
+  return request(`/sessions/${encodeURIComponent(code)}/glory`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ delta }),
+  });
+}
+
+/** PATCH /sessions/{code}/players/{playerId} — edit one's own card (Bearer player token). */
+export function updatePlayer(
+  code: string,
+  token: string,
+  playerId: string,
+  patch: PlayerPatch,
+): Promise<{ player: Player }> {
+  return request(`/sessions/${encodeURIComponent(code)}/players/${encodeURIComponent(playerId)}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(patch),
+  });
 }

@@ -23,6 +23,7 @@
     "paths": {
       // Mirror the Vite resolve.alias so `tsc --noEmit` resolves the same modules.
       "@domain": ["../backend/src/domain/index.ts"],
+      "@data/*": ["../data/*"],
       "@/*": ["./src/*"]
     }
   },

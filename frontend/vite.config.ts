@@ -29,6 +29,8 @@ export default defineConfig({
       // Shared, frontend-safe domain barrel (pure TS — no node/aws). Points straight
       // at the barrel file so `import ... from '@domain'` resolves for Vite and tsc.
       '@domain': fileURLToPath(new URL('../backend/src/domain/index.ts', import.meta.url)),
+      // Shipped game data (JSON) shared with the backend — e.g. `@data/conditions.json`.
+      '@data': fileURLToPath(new URL('../data', import.meta.url)),
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
