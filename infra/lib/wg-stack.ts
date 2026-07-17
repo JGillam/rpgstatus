@@ -118,19 +118,20 @@ export class WgStack extends cdk.Stack {
       method: apigwv2.HttpMethod,
       fn: nodejs.NodejsFunction,
       integrationId: string,
-    ): void => {
+    ): apigwv2.HttpRoute[] =>
       httpApi.addRoutes({
         path: routePath,
         methods: [method],
         integration: new integrations.HttpLambdaIntegration(integrationId, fn),
       });
-    };
-    addRoute('/sessions', apigwv2.HttpMethod.POST, createSessionFn, 'IntCreateSession');
-    addRoute('/sessions/{code}/join', apigwv2.HttpMethod.POST, joinSessionFn, 'IntJoin');
-    addRoute('/sessions/{code}/claim', apigwv2.HttpMethod.POST, claimFn, 'IntClaim');
-    addRoute('/sessions/{code}/admit', apigwv2.HttpMethod.POST, admitFn, 'IntAdmit');
-    addRoute('/sessions/{code}/kick', apigwv2.HttpMethod.POST, kickFn, 'IntKick');
-    addRoute('/state/{code}', apigwv2.HttpMethod.GET, getStateFn, 'IntGetState');
+    const routes: apigwv2.HttpRoute[] = [
+      ...addRoute('/sessions', apigwv2.HttpMethod.POST, createSessionFn, 'IntCreateSession'),
+      ...addRoute('/sessions/{code}/join', apigwv2.HttpMethod.POST, joinSessionFn, 'IntJoin'),
+      ...addRoute('/sessions/{code}/claim', apigwv2.HttpMethod.POST, claimFn, 'IntClaim'),
+      ...addRoute('/sessions/{code}/admit', apigwv2.HttpMethod.POST, admitFn, 'IntAdmit'),
+      ...addRoute('/sessions/{code}/kick', apigwv2.HttpMethod.POST, kickFn, 'IntKick'),
+      ...addRoute('/state/{code}', apigwv2.HttpMethod.GET, getStateFn, 'IntGetState'),
+    ];
 
     // Throttling (D12): a default cap, plus stricter caps on the uncacheable, abusable
     // create/join routes. Route settings aren't exposed on the L2, so use the CfnStage
@@ -147,6 +148,11 @@ export class WgStack extends cdk.Stack {
       'POST /sessions': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 5 },
       'POST /sessions/{code}/join': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 5 },
     });
+    // RouteSettings validate against existing route keys, so the stage must be created AFTER
+    // the routes — otherwise "Unable to find Route by key POST /sessions".
+    for (const route of routes) {
+      cfnStage.node.addDependency(route);
+    }
 
     // 6. Route 53 hosted zone — explicit attributes, so no context lookup at synth.
     const zone = route53.PublicHostedZone.fromHostedZoneAttributes(this, 'Zone', {
