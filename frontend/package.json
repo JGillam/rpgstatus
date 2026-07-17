@@ -1,0 +1,7 @@
+{
+  "name": "@wg/frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "React/Vite SPA — player app + GM console (scaffolded for real in the frontend-foundation step)"
+}

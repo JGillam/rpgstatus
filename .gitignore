@@ -1,0 +1,14 @@
+# deps & builds
+node_modules/
+dist/
+coverage/
+cdk.out/
+
+# env & local
+.env
+.env.*
+*.local
+.claude/settings.local.json
+
+# os / editor
+.DS_Store

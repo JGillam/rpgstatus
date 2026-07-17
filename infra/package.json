@@ -1,0 +1,6 @@
+{
+  "name": "@wg/infra",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AWS CDK app, single stack, us-east-1 (scaffolded for real in the infra-skeleton step; deploy with --profile jason-deploy)"
+}

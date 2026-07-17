@@ -1,8 +1,8 @@
 # Wrath & Glory Session Assistant — Design Spec
 
-**Status:** v0.3 draft — decision rounds 1–2 folded in. Intended to be complete enough to hand to a
-UX/Claude Design session.
-**Last updated:** 2026-07-16
+**Status:** v0.4 — decision rounds 1–3 folded in; round 3 captures the findings of the Claude Design
+review (GM Console + Player Screen prototypes).
+**Last updated:** 2026-07-17
 
 ---
 
@@ -54,6 +54,16 @@ bar on **abuse resistance**.
 | D13 | **Auth = simple signed, expiring tokens** (GM + per-player), validated on mutations (and ideally at the edge for reads). Sessions ≤ 48h, so short token lifetimes are fine. |
 | D14 | **Region = us-east-1** (required for CloudFront ACM cert + CloudFront Functions/WAF). **TTL = 3 days.** |
 
+### Round 3 (2026-07-17) — Claude Design review feedback
+| # | Decision |
+|---|---|
+| D15 | **Mobs join the turn checklist.** Each mob gets an `actedThisRound` flag (GM-only — never sent to players); **"Next round" resets players' *and* mobs'** acted flags. |
+| D16 | **Counter bounds.** Glory and Ruin **floor at 0** (decrements are conditional, not blind atomic ADDs); **Wrath clamps to 0–6**. |
+| D17 | **Condition `note` + custom free-text conditions deferred to v2.** MVP ships exactly the 14 preset conditions with ranks (matches the designed picker). |
+| D18 | **Mob names are GM-editable at any time.** GMs often name a mob descriptively ("Grotesk Blob", "Mob 1") and rename it once the party identifies the creature. Add-mob becomes a small dialog (name, tier, max HP, count 1–8, starts-hidden) and mob names support inline rename. |
+| D19 | **`conditions.json` gains a `category`** (`damage` / `affliction` / `impairment`) so condition-chip theming is data-driven instead of name lists hardcoded in the frontend. |
+| D20 | **Join code stays 5 chars for MVP** (unambiguous alphabet — no 0/O/1/I); revisit length when the Phase 2 edge token check lands (the code is then not the read capability). |
+
 ---
 
 ## 3. Goals & Non-Goals
@@ -87,7 +97,7 @@ bar on **abuse resistance**.
 | Push/Pull **Glory** (+/−, logged) | ✓ | ✓ | ✓ |
 | Adjust **Ruin** / toggle Ruin visibility | — | — | ✓ |
 | Advance round (reset acted) | — | — | ✓ |
-| Manage mobs (HP, reveal, duplicate, conditions, kill) | — | — | ✓ |
+| Manage mobs (HP, rename, reveal, duplicate, acted, conditions, kill) | — | — | ✓ |
 | Admit/kick players, end session | — | — | ✓ |
 | Export activity log | ✓ (own copy) | ✓ | ✓ |
 
@@ -101,29 +111,37 @@ bar on **abuse resistance**.
 ### Shared resources
 - **Glory** — shared **party** pool. **Always visible.** **Push (+1) / Pull (−1) by any player or the
   GM**, each change attributed in the **activity log** (§5.4). Stored as an integer with an atomic
-  increment (no read-modify-write races).
-- **Ruin** — global **GM** pool. **Visibility toggled by the GM.** GM-managed, atomic +/−. (Ruin
-  changes may also be logged.)
+  increment (no read-modify-write races); **floor of 0** — decrements are conditional (D16).
+- **Ruin** — global **GM** pool. **Visibility toggled by the GM.** GM-managed, atomic +/−, floor of
+  0 (D16). (Ruin changes may also be logged.)
 
 ### Per-character state
 - **Name** + **index** (`P1…Pn`, assigned at admit — used for compact log attribution).
 - **Max/current Wounds** — primary damage track.
 - **Max/current Shock** — secondary (stun/fatigue) track.
-- **Wrath** — personal points (re-rolls, extra dice, cheating death).
+- **Wrath** — personal points (re-rolls, extra dice, cheating death). Clamped to **0–6** (D16).
 - **Conditions** — tag list from the **14 Core conditions** (Appendix A, shipped as
-  `/data/conditions.json` with tooltip help text) plus free-text custom. Each applied condition is
-  `{ id, rank?, note? }` — `rank` supports stackable conditions (e.g. *Hindered (2)*, *Bleeding (3)*),
-  `note` holds a reminder like "2 rounds". Conditions are added/removed manually (no auto-expiry).
+  `/data/conditions.json` with tooltip help text). Each applied condition is `{ id, rank? }` — `rank`
+  supports stackable conditions (e.g. *Hindered (2)*, *Bleeding (3)*). Conditions are added/removed
+  manually (no auto-expiry). *Free-text custom conditions and a per-condition `note` field are
+  deferred to v2 (D17).*
 - **Status** — `active` | `down` | `dying` | `dead` | `stable`.
 - **Acted-this-round** — boolean for the turn checklist.
 
 ### Mobs (enemies/NPCs)
-- **Label**, optional **tier** (Troops/Elite/Adversary, cosmetic).
+- **Label** — free text, **GM-editable at any time** (D18): a GM may start with "Mob 1" or
+  "Grotesk Blob" and rename it once the party identifies the creature. Optional **tier**
+  (Troops/Elite/Adversary, cosmetic).
 - **Revealed** flag — added **unrevealed** (hidden from players), **revealed** on GM click.
 - **Exact HP** (GM-only) → projected server-side to a **coarse indicator** for players:
   `healthy` (≥75%) → `minor injury` (40–74%) → `gravely injured` (1–39%) → `dead` (0%). Thresholds
   configurable; revisit after a playtest (Q-C, accepted for now).
-- **Conditions** (optional). **Duplicate** action to clone stats for "add 4 of the same."
+- **Acted-this-round** — GM-facing turn flag per mob (D15); **never sent to players**; reset by
+  "Next round" along with the players' flags.
+- **Conditions** (optional). **Duplicate** action to clone stats; the add-mob dialog also takes a
+  **count** (1–8) for "add 4 of the same" (D18).
+- **Defaults:** new mob = "New Enemy", Troops, 6/6 HP, unrevealed. Player admit defaults: Wounds
+  12/12, Shock 6/6 (current = max at setup), Wrath 0, status `active`.
 
 ### 5.4 Activity log (D10)
 Compact, append-only, attributed record of resource changes — cheap to store and export.
@@ -145,13 +163,15 @@ Compact, append-only, attributed record of resource changes — cheap to store a
 1. GM creates session → join **code** + GM control view (GM token in localStorage).
 2. **Lobby/admit** (anti-abuse); kick anytime.
 3. Player setup: name, max Wounds, max Shock, starting Wrath.
-4. **Turn checklist:** round number + per-player acted/not-yet; GM "Next round" resets it.
+4. **Turn checklist:** round number + per-player acted/not-yet; GM-only per-mob acted flags (D15);
+   GM "Next round" resets both.
 5. **Shared counters:** Glory (always, **player push/pull**) + Ruin (GM, toggleable); Wrath per character.
 6. **Activity log** for Glory/Ruin changes; **GM export/download**.
 7. **Party roster:** everyone's Wounds/Shock + status/conditions, visible to all.
 8. **Player self-service:** edit own Wounds/Shock/Wrath/conditions/acted/Down.
 9. **GM override:** edit any character.
-10. **Mobs:** add (unrevealed default + reveal), exact HP (GM) → coarse indicator (players), duplicate, conditions, kill/remove.
+10. **Mobs:** add via dialog (name, tier, max HP, count, starts-hidden — D18), inline rename, reveal,
+    exact HP (GM) → coarse indicator (players), duplicate, acted flag, conditions, kill/remove.
 11. **Condition tooltips** from shipped help text (Appendix A).
 12. **Polling sync**; **TTL 3-day** auto-expiry; manual end-session.
 
@@ -160,6 +180,7 @@ Compact, append-only, attributed record of resource changes — cheap to store a
 - Read-only **spectator/TV** view.
 - Save/re-import a party roster between chapters.
 - Per-mob notes; damage log + undo; "reveal all"/group mob controls; mob templates.
+- Custom free-text conditions + per-condition `note` field (D17).
 - Log filters (by player / by resource).
 
 *(Explicitly not planned: initiative engine — D6; Glory-consensus enforcement — D9.)*
@@ -218,9 +239,10 @@ Everything players see, denser, multi-column, **plus inline controls**:
 - **Round control:** **Next round** (confirm — resets acted flags); manual per-player acted toggles.
 - **Party panel:** each character editable — Wounds/Shock/Wrath steppers, **condition picker**
   (presets + custom), **status** dropdown (active/down/dying/dead/stable). (GM override.)
-- **Mob panel:** **Add mob** (label, tier, max HP) → defaults **unrevealed**; **Reveal** toggle;
-  **Duplicate**; exact-HP stepper **with the derived coarse badge shown beside it**; conditions;
-  **kill/remove**.
+- **Mob panel:** **Add mob** dialog (label, tier, max HP, count 1–8, starts-hidden — D18) → defaults
+  **unrevealed**; **inline rename** (click the name — D18); per-mob **acted** toggle (D15); **Reveal**
+  toggle; **Duplicate**; exact-HP stepper **with the derived coarse badge shown beside it**;
+  conditions; **kill/remove**.
 - **Activity log panel** (§7.7) with **Export**.
 - **Session panel:** code, lobby/admits, kick, **end session**, expiry indicator.
 
@@ -233,8 +255,8 @@ Everything players see, denser, multi-column, **plus inline controls**:
 ### 7.8 Condition chips & tooltips
 - Conditions render as **chips** on character cards/rows. Tap/hover → a **tooltip/popover** with the
   condition's **name + short effect summary** (shipped help text, Appendix A), optionally a rulebook
-  page ref. GM's **condition picker** is a searchable list of presets (with the same help text) plus a
-  **custom** free-text option and an optional note field ("2 rounds").
+  page ref. GM's **condition picker** is the list of the 14 presets (with the same help text);
+  custom free-text conditions and the note field are v2 (D17).
 
 ### 7.9 Shared component inventory (for design)
 Counter (big number + +/− + optional set), **Wounds/Shock bar** (labeled, numeric, color+state),
@@ -305,19 +327,21 @@ One table, on-demand, **TTL (3 days)**. All of a session's items share the parti
 |---|---|---|---|
 | Session meta | `SESSION#<code>` | `META` | `state`, `glory`, `ruin`, `showRuin`, `round`, `settings{…}`, `gmTokenHash`, `nextPlayerIndex`, `createdAt`, `ttl` |
 | Player | `SESSION#<code>` | `PLAYER#<id>` | `index`, `name`, `maxWounds`, `wounds`, `maxShock`, `shock`, `wrath`, `conditions[]`, `status`, `actedThisRound`, `admitted`, `playerTokenHash`, `joinedAt`, `ttl` |
-| Mob | `SESSION#<code>` | `MOB#<id>` | `label`, `tier`, `maxHp`, `hp`, `revealed`, `conditions[]`, `ttl` |
+| Mob | `SESSION#<code>` | `MOB#<id>` | `label`, `tier`, `maxHp`, `hp`, `revealed`, `actedThisRound`, `conditions[]`, `ttl` |
 | Log | `SESSION#<code>` | `LOG` | `e` (list of `[actorIndex, delta, typeCode, ts]`), `ttl` |
 
 ### 9.1 Access patterns
 - **Hydrate board:** `Query PK = SESSION#<code>` → meta + players + mobs + log in one call. The read
-  handler **projects mob HP to a coarse label** and **strips unrevealed mobs / exact HP** for player
-  tokens.
+  handler **projects mob HP to a coarse label** and **strips unrevealed mobs / exact HP / mob acted
+  flags** for player tokens.
 - **Mutations are per-item, mostly atomic:**
-  - Counters: `UpdateItem … ADD glory :d` / `ADD ruin :d` (atomic — no lost updates).
+  - Counters: `UpdateItem … ADD glory :d` / `ADD ruin :d` (atomic — no lost updates). Decrements
+    carry a condition expression (e.g. `glory >= :abs(d)`) so pools floor at 0 (D16).
   - Log append: `UpdateItem SET e = list_append(if_not_exists(e, :empty), :entry)` (atomic; concurrent appends serialize cleanly).
   - Player edits only their `PLAYER#<id>`; GM may edit any item.
   - Mob duplicate = `PutItem` new `MOB#<id>` copied from source.
-  - "Next round" = set each player's `actedThisRound=false` + bump `round`.
+  - "Next round" = set every player's **and mob's** `actedThisRound=false` + bump `round` (D15).
+  - Mob rename/edit = GM-only `UpdateItem` on `MOB#<id>` (`label`, `tier`, `maxHp` — D18).
 
 ### 9.2 Lifecycle & cleanup
 - **TTL (3 days)** auto-deletes an entire session — no teardown, satisfies retention with zero ops.
@@ -434,7 +458,7 @@ traffic (WAF is the main thing that would move the needle).
   /data        conditions.json (names + help text)
   /docs        this spec, ADRs
   ```
-- **Deploy:** `cdk deploy`; optional GitHub Action later.
+- **Deploy:** `cdk deploy --profile jason-deploy` (us-east-1); optional GitHub Action later.
 
 ---
 
@@ -460,7 +484,9 @@ Rounds 1–2 are resolved (§2). Remaining:
   nit:* give the summaries one proof-read against the book before any **public** release (they're
   paraphrased, but confirm no wording is too close to the original).
 - **Q-C — Coarse-HP thresholds.** Accepted as 75/40/1/0% for now; revisit after a playtest.
-- **Anything from the UX/Claude Design pass** that implies data we don't yet store (feed back into §9).
+- **UX/Claude Design pass. ✅ Resolved (Round 3, D15–D20).** The GM Console + Player Screen review fed
+  back into §5/§9 (mob acted flag, counter bounds, deferred note/custom, mob rename, chip categories).
+  Still in design: entry/join flow, GM setup/lobby, add-mob dialog + inline rename, lifecycle states.
 
 ---
 
@@ -480,7 +506,8 @@ Rounds 1–2 are resolved (§2). Remaining:
 ## Appendix A — Condition help text (Core Rules)
 
 > Captured from the GM's verified reference and shipped as **`/data/conditions.json`**
-> (`{ id, name, stacks, summary }` + a `general` rules array). Summaries are **concise paraphrases**
+> (`{ id, name, stacks, category, summary }` + a `general` rules array — `category` drives chip
+> theming: `damage` / `affliction` / `impairment`, D19). Summaries are **concise paraphrases**
 > for tooltips, **not verbatim** rulebook text — proof-read before any public release. `stacks: true`
 > conditions take a rank (e.g. *Hindered (2)*, *Bleeding (3)*).
 
