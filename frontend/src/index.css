@@ -1,0 +1,94 @@
+@import 'tailwindcss';
+
+/*
+ * Wrath & Glory — dark-only theme. Palette from the frontend-foundation brief and the
+ * design "Style Directions". Every token below becomes both a CSS variable
+ * (var(--color-gold)) and a Tailwind utility (bg-panel, text-gold, border-default, …).
+ * There is no light mode by design.
+ */
+@theme {
+  /* Surfaces */
+  --color-bg: #0d0b08;
+  --color-bg-player: #0a0806;
+  --color-panel: #16120b;
+  --color-raised: #1d1810;
+  --color-track: #2a2216;
+
+  /* Borders (border-default / border-strong / border-emphasis) */
+  --color-default: #3a3120;
+  --color-strong: #55492e;
+  --color-emphasis: #6a5c38;
+
+  /* Text */
+  --color-text: #ece4d0;
+  --color-text-2: #cbc1a8;
+  --color-muted: #a89e86;
+  --color-faint: #6b6252;
+
+  /* Gold — primary accent */
+  --color-gold: #f0b429;
+  --color-gold-hi: #ffc84a;
+  --color-on-gold: #16120b;
+
+  /* Semantic accents */
+  --color-violet: #a98bff;
+  --color-ruin: #a98bff;
+  --color-red: #ff4d52;
+  --color-wounds: #ff4d52;
+  --color-blue: #46b5f0;
+  --color-shock: #46b5f0;
+  --color-orange: #ff8a3d;
+  --color-wrath: #ff8a3d;
+
+  /* Coarse mob HP (player-facing) */
+  --color-healthy: #3ecf6a;
+  --color-minor: #f5b425;
+  --color-gravely: #ff7038;
+  --color-dead: #7a7060;
+
+  /* Player status */
+  --color-status-active: #3ecf6a;
+  --color-status-down: #ff8a3d;
+  --color-status-dying: #ff4d52;
+  --color-status-dead: #7a7060;
+  --color-status-stable: #46b5f0;
+
+  /* Fonts — Cinzel for display/headings/big numbers, Spectral for body */
+  --font-display: 'Cinzel', ui-serif, Georgia, serif;
+  --font-body: 'Spectral', ui-serif, Georgia, serif;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    background-color: var(--color-bg);
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Default border color to the theme border (Tailwind v4 uses currentColor otherwise). */
+  *,
+  ::after,
+  ::before {
+    border-color: var(--color-default);
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+  }
+}
