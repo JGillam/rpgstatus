@@ -1,7 +1,7 @@
 # Wrath & Glory Session Assistant — Design Spec
 
-**Status:** v0.4 — decision rounds 1–3 folded in; round 3 captures the findings of the Claude Design
-review (GM Console + Player Screen prototypes).
+**Status:** v0.5 — decision rounds 1–4 folded in; rounds 3–4 capture the Claude Design review (GM
+Console + Player Screen, then Entry/Join, GM Setup & GM Console v2).
 **Last updated:** 2026-07-17
 
 ---
@@ -64,6 +64,14 @@ bar on **abuse resistance**.
 | D19 | **`conditions.json` gains a `category`** (`damage` / `affliction` / `impairment`) so condition-chip theming is data-driven instead of name lists hardcoded in the frontend. |
 | D20 | **Join code stays 5 chars for MVP** (unambiguous alphabet — no 0/O/1/I); revisit length when the Phase 2 edge token check lands (the code is then not the read capability). |
 
+### Round 4 (2026-07-17) — Entry/Join, GM Setup & GM Console v2 designs
+| # | Decision |
+|---|---|
+| D21 | **Player presence lifecycle.** Replace `admitted:boolean` with **`presence`** = `pending` \| `admitted` \| `ignored` \| `removed`. **Ignore/Kick soft-mark** (tombstone, cleaned by TTL) instead of hard-deleting, so a returning client can tell *waiting* → *not admitted (ignored)* vs *removed by GM*. Roster = `presence==='admitted'`; lobby = `presence==='pending'`. |
+| D22 | **Sessions are live from creation.** Drop the `lobby` session state — admission is **continuous** via the lobby panel. **`SessionState = active \| ended`** (persisted); **`expired`** is client-derived when the session item is gone (TTL). |
+| D23 | **Settings + validation limits.** `settings.chapterName?` (≤48; blank → "Untitled chapter"). Central limits: display name 1–24 (required); max Wounds 1–40; max Shock 1–20; Wrath 0–6; Glory/Ruin ≥0; mob maxHp ≥1; add-mob count 1–8; join code 5× `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`. |
+| D24 | **Batch add-mob.** Add-mob takes a **`count` (1–8)** and writes **N individual `MOB#` items** (per-mob tracking, D5); Mob shape unchanged. Inline rename edits **`label` only**. |
+
 ---
 
 ## 3. Goals & Non-Goals
@@ -125,7 +133,9 @@ bar on **abuse resistance**.
   supports stackable conditions (e.g. *Hindered (2)*, *Bleeding (3)*). Conditions are added/removed
   manually (no auto-expiry). *Free-text custom conditions and a per-condition `note` field are
   deferred to v2 (D17).*
-- **Status** — `active` | `down` | `dying` | `dead` | `stable`.
+- **Status** — combat/defeated axis: `active` | `down` | `dying` | `dead` | `stable`.
+- **Presence** — lobby/membership axis: `pending` | `admitted` | `ignored` | `removed` (D21).
+  Independent of Status; selects which client takeover renders (waiting / not-admitted / removed).
 - **Acted-this-round** — boolean for the turn checklist.
 
 ### Mobs (enemies/NPCs)
@@ -208,7 +218,8 @@ Invalid code → inline error.
 
 ### 7.3 GM — Create & Lobby
 - **Start** → generates a **join code** shown large + a **Session Settings** panel: chapter name,
-  condition preset set, initial Glory/Ruin, **"Show Ruin to players"** toggle.
+  initial Glory/Ruin, **"Show Ruin to players"** toggle. (Single 14-condition preset set, D17 — no
+  preset picker.)
 - **Lobby list** of pending joiners, each with **Admit** / **Ignore**; admitted players get an
   **index** and enter the roster; **Kick** available anytime.
 - Header persists the **code** (for latecomers) and a **live session status/expiry** indicator.
@@ -326,7 +337,7 @@ One table, on-demand, **TTL (3 days)**. All of a session's items share the parti
 | Item | PK | SK | Key attributes |
 |---|---|---|---|
 | Session meta | `SESSION#<code>` | `META` | `state`, `glory`, `ruin`, `showRuin`, `round`, `settings{…}`, `gmTokenHash`, `nextPlayerIndex`, `createdAt`, `ttl` |
-| Player | `SESSION#<code>` | `PLAYER#<id>` | `index`, `name`, `maxWounds`, `wounds`, `maxShock`, `shock`, `wrath`, `conditions[]`, `status`, `actedThisRound`, `admitted`, `playerTokenHash`, `joinedAt`, `ttl` |
+| Player | `SESSION#<code>` | `PLAYER#<id>` | `index`, `name`, `maxWounds`, `wounds`, `maxShock`, `shock`, `wrath`, `conditions[]`, `status`, `actedThisRound`, `presence`, `playerTokenHash`, `joinedAt`, `ttl` |
 | Mob | `SESSION#<code>` | `MOB#<id>` | `label`, `tier`, `maxHp`, `hp`, `revealed`, `actedThisRound`, `conditions[]`, `ttl` |
 | Log | `SESSION#<code>` | `LOG` | `e` (list of `[actorIndex, delta, typeCode, ts]`), `ttl` |
 
@@ -342,6 +353,8 @@ One table, on-demand, **TTL (3 days)**. All of a session's items share the parti
   - Mob duplicate = `PutItem` new `MOB#<id>` copied from source.
   - "Next round" = set every player's **and mob's** `actedThisRound=false` + bump `round` (D15).
   - Mob rename/edit = GM-only `UpdateItem` on `MOB#<id>` (`label`, `tier`, `maxHp` — D18).
+  - Add mob = **N `PutItem`s** for `count` (1–8) individual `MOB#` items (D24).
+  - Admit = set `presence='admitted'` + assign `index`; **Ignore/Kick = set `presence='ignored'|'removed'`** (soft tombstone; TTL cleans up — never a hard delete, D21).
 
 ### 9.2 Lifecycle & cleanup
 - **TTL (3 days)** auto-deletes an entire session — no teardown, satisfies retention with zero ops.
@@ -375,10 +388,10 @@ Both are fractions of a cent, so cost isn't the deciding factor at 11 users — 
 ## 10. Session Lifecycle & Join Flow
 
 1. **Create (GM).** `POST /sessions` → server generates a **code** + a signed **GM token**
-   (localStorage). Session starts `lobby`.
-2. **Join (Player).** `POST /sessions/<code>/join {name}` → player created `admitted=false`; on admit
+   (localStorage). Session is `active` from creation — admission is continuous (D22).
+2. **Join (Player).** `POST /sessions/<code>/join {name}` → player created `presence='pending'`; on admit
    they receive a signed **player token** (localStorage) + an **index**.
-3. **Admit (GM).** GM taps **Admit** → `admitted=true`; player enters the roster. **Ignore/Kick** removes them.
+3. **Admit (GM).** GM taps **Admit** → `presence='admitted'`; player enters the roster. **Ignore** (pending) → `ignored`, **Kick** (admitted) → `removed` — soft tombstones (D21).
 4. **Play.** Mutations flow with role/scope checks; everyone polls the (cached) state.
 5. **End / expire.** GM ends manually, or **TTL (3d)** auto-cleans. GM may **export the log** before/after.
 
@@ -484,9 +497,11 @@ Rounds 1–2 are resolved (§2). Remaining:
   nit:* give the summaries one proof-read against the book before any **public** release (they're
   paraphrased, but confirm no wording is too close to the original).
 - **Q-C — Coarse-HP thresholds.** Accepted as 75/40/1/0% for now; revisit after a playtest.
-- **UX/Claude Design pass. ✅ Resolved (Round 3, D15–D20).** The GM Console + Player Screen review fed
-  back into §5/§9 (mob acted flag, counter bounds, deferred note/custom, mob rename, chip categories).
-  Still in design: entry/join flow, GM setup/lobby, add-mob dialog + inline rename, lifecycle states.
+- **UX/Claude Design pass. ✅ Resolved (Rounds 3–4, D15–D24).** The GM Console + Player Screen review
+  fed §5/§9 (mob acted flag, counter bounds, deferred note/custom, mob rename, chip categories);
+  Round 4 folded in Entry/Join, GM Setup & GM Console v2 (presence lifecycle, live-from-creation,
+  settings/limits, batch add-mob). Remaining design gaps (low-effort, non-blocking): token-invalid →
+  rejoin, empty-no-mobs, and the optimistic-pending edit state.
 
 ---
 
