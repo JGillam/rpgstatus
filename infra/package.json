@@ -2,5 +2,20 @@
   "name": "@wg/infra",
   "private": true,
   "version": "0.1.0",
-  "description": "AWS CDK app, single stack, us-east-1 (scaffolded for real in the infra-skeleton step; deploy with --profile jason-deploy)"
+  "description": "AWS CDK app, single stack, us-east-1 (deploy with --profile jason-deploy)",
+  "scripts": {
+    "synth": "cdk synth",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2",
+    "constructs": "^10"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "aws-cdk": "^2",
+    "esbuild": "^0.24",
+    "ts-node": "^10",
+    "typescript": "^5.5"
+  }
 }

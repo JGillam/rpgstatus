@@ -74,7 +74,7 @@ bar on **abuse resistance**.
 ### Round 5 (2026-07-17) — Domain & hosting
 | # | Decision |
 |---|---|
-| D25 | **Domain = `rpgstatus.com`** (newly registered; Route 53 hosted zone already exists in the `jason-deploy` account). The app is served at **`wrathandglory.rpgstatus.com`**; the **apex `rpgstatus.com` redirects** (temporary **302** — the apex may later become a multi-game hub) to that host. **ACM cert (us-east-1)** covers `rpgstatus.com` + **`*.rpgstatus.com`** (wildcard future-proofs one subdomain per game, deferred). Redirect implemented with the CDK **`HttpsRedirect`** (`aws-route53-patterns`) construct. Wired in step 3 (infra). |
+| D25 | **Domain = `rpgstatus.com`** (newly registered; Route 53 hosted zone already exists in the `jason-deploy` account). The app is served at **`wrathandglory.rpgstatus.com`**; the **apex `rpgstatus.com` redirects** (temporary **302** — the apex may later become a multi-game hub) to that host. **ACM cert (us-east-1)** covers `rpgstatus.com` + **`*.rpgstatus.com`** (wildcard future-proofs one subdomain per game, deferred). Redirect implemented as a **302 via a dedicated apex CloudFront distribution + a CloudFront Function** (not `HttpsRedirect`, which only emits a 301). Wired in step 3 (infra). |
 
 ---
 
@@ -466,8 +466,8 @@ traffic (WAF is the main thing that would move the needle).
   Lambda, DynamoDB), **us-east-1**.
 - **Domain/DNS (D25):** **`rpgstatus.com`** in Route 53 (existing hosted zone, `jason-deploy` account);
   app host **`wrathandglory.rpgstatus.com`** as a CloudFront alternate domain; **ACM cert us-east-1**
-  for `rpgstatus.com` + `*.rpgstatus.com`; **apex → app** 302 redirect via `HttpsRedirect`
-  (`aws-route53-patterns`). Future games = sibling `<game>.rpgstatus.com` hosts (deferred).
+  for `rpgstatus.com` + `*.rpgstatus.com`; **apex → app** 302 redirect via a CloudFront Function on a
+  dedicated apex distribution. Future games = sibling `<game>.rpgstatus.com` hosts (deferred).
 - **Frontend:** **React + Vite + shadcn/ui + Tailwind**; mobile-first player app + responsive GM
   console; built assets → S3 → CloudFront.
 - **Backend:** **TypeScript Lambda**; shared domain types (`Session`/`Player`/`Mob`/`LogEntry`) with
