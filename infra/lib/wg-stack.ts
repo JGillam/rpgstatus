@@ -16,6 +16,7 @@ import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 
 // Domain + DNS (D25). Hosted zone pre-exists in the jason-deploy account.
 const DOMAIN = 'rpgstatus.com';
@@ -276,6 +277,16 @@ export class WgStack extends cdk.Stack {
       zone,
       recordName: APP_RECORD_NAME,
       target: appAliasTarget,
+    });
+
+    // 8b. Ship the built SPA to the bucket + invalidate CloudFront on each deploy.
+    //     Requires frontend/dist to exist first: `npm --workspace @wg/frontend run build`.
+    new s3deploy.BucketDeployment(this, 'AppSpaDeployment', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '..', '..', 'frontend', 'dist'))],
+      destinationBucket: appBucket,
+      distribution: appDistribution,
+      distributionPaths: ['/*'],
+      prune: true,
     });
 
     // 9. Apex 302 redirect (D25: temporary → 302, NOT a 301, so NOT HttpsRedirect).
