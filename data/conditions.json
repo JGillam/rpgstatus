@@ -1,14 +1,14 @@
 {
   "edition": "Wrath & Glory (Core Rules)",
-  "note": "Condition summaries are concise paraphrases for in-app tooltips, not verbatim rulebook text. Verify against the rulebook before public release.",
+  "note": "Summaries are original-wording paraphrases of Core Rules mechanics, written for these in-app tooltips — not rulebook text. When editing, re-verify the mechanics (DNs, durations, effects) against the book, and keep the wording original.",
   "reference": "https://www.dsouza.uk/RolePlayingGames/WrathAndGlory/RulesAndResources/Conditions.html",
   "categoryNote": "category drives condition-chip theming (D19): damage = ongoing harm, affliction = mind/toxin effects, impairment = restrictions and penalties.",
   "general": [
-    "Conditions represent ways you can be hurt outside of Wounds.",
-    "A condition may end at the end of a scene (GM's discretion); some persist until treated.",
-    "The same condition can apply more than once and the penalties stack, e.g. Hindered (2) = +2 DN, Bleeding (3) = 3 Mortal Wounds per turn.",
-    "If you suffer several conditions with similar penalties, they don't stack — use only the worst.",
-    "Defence can be reduced to a minimum of 1; you can't voluntarily take an action that would drop it below 1."
+    "A condition tracks a way of being hurt or hampered that isn't plain Wound damage.",
+    "The GM may let a condition lapse when the scene closes; some hang on until they're treated.",
+    "Suffering the same condition again adds ranks, and ranked penalties add up — Hindered (2) means +2 DN, Bleeding (3) means 3 Mortal Wounds a turn.",
+    "When different conditions impose similar penalties, they don't combine — apply only the harshest one.",
+    "Defence never drops below 1, and you can't voluntarily act in a way that would take it lower."
   ],
   "conditions": [
     {
@@ -16,98 +16,98 @@
       "name": "Bleeding",
       "stacks": true,
       "category": "damage",
-      "summary": "Take 1 Mortal Wound at the end of each of your turns (per rank). Ends on a successful Toughness test (DN 4) or when an ally aids you with Medicae."
+      "summary": "Each rank deals 1 Mortal Wound as your turn ends. Stop the bleeding by passing a DN 4 Toughness test, or when an ally tends you with Medicae."
     },
     {
       "id": "blinded",
       "name": "Blinded",
       "stacks": false,
       "category": "impairment",
-      "summary": "You can't see properly: +4 DN to all sight-based tasks, including every Combat test (replaces lesser vision penalties). May be removed with a Combat Action at the GM's discretion."
+      "summary": "Sight fails you: +4 DN on anything that needs vision — every Combat test included — overriding any lesser sight penalty. The GM may allow a Combat Action to clear it."
     },
     {
       "id": "exhausted",
       "name": "Exhausted",
       "stacks": false,
       "category": "impairment",
-      "summary": "You can only Walk/Crawl, make a basic attack, or Fall Back, and can't roll Determination. Any Shock you take converts straight into Mortal Wounds. Ends when you recover Shock (or per its source)."
+      "summary": "You're spent: only Walk/Crawl, a basic attack, or Fall Back, with no Determination rolls — and any Shock you'd take becomes Mortal Wounds instead. Ends once you recover Shock (or as its source dictates)."
     },
     {
       "id": "fear",
       "name": "Fear",
       "stacks": false,
       "category": "affliction",
-      "summary": "Roll Resolve vs the source's DN. On a failure, +2 DN to all tests until the scene ends or an ally passes a Leadership (Wil) test. Fear-causing beings are immune to Fear and Intimidation."
+      "summary": "Test Resolve against the source's DN. Fail, and every test is at +2 DN until the scene ends or an ally passes a Leadership (Wil) test to steady you. Beings that cause Fear are themselves immune to Fear and Intimidation."
     },
     {
       "id": "frenzied",
       "name": "Frenzied",
       "stacks": false,
       "category": "affliction",
-      "summary": "You must charge and attack the nearest visible enemy, always using All-Out Attack. Immune to Fear, can't be Pinned, and gain +1 Strength. May resist at the start of your turn with a DN 3 Willpower test."
+      "summary": "Fury takes over: you must charge the nearest enemy you can see and swing with All-Out Attacks. You get +1 Strength, immunity to Fear, and can't be Pinned. At the start of your turn, a DN 3 Willpower test shakes it off."
     },
     {
       "id": "hindered",
       "name": "Hindered",
       "stacks": true,
       "category": "impairment",
-      "summary": "+1 DN to all tests per rank (Hindered (2) = +2 DN). Lasts until the end of your next turn unless stated otherwise."
+      "summary": "+1 DN on every test per rank — Hindered (2) is +2 DN. Wears off at the end of your next turn unless its source says otherwise."
     },
     {
       "id": "on-fire",
       "name": "On Fire",
       "stacks": false,
       "category": "damage",
-      "summary": "Take 1d3 Mortal Wounds at the start of each of your turns. Spend your Action to go Prone and put it out (DN 3 Athletics), or ignore it and risk becoming Hindered (DN 3 Willpower)."
+      "summary": "The flames deal 1d3 Mortal Wounds as each of your turns starts. Spend your Action to drop Prone and douse them (DN 3 Athletics) — or fight on, testing DN 3 Willpower to avoid becoming Hindered."
     },
     {
       "id": "pinned",
       "name": "Pinned",
       "stacks": false,
       "category": "impairment",
-      "summary": "Caught by suppressing fire: you can't leave cover (moving to the nearest cover if exposed), though you may still take other actions, and take +2 DN firing back at whoever pinned you. Ends if an ally rallies you (Leadership test)."
+      "summary": "Suppressing fire has you: you can't leave cover (if caught in the open, you move to the nearest), other actions remain possible, and firing back at whoever pinned you is +2 DN. An ally's Leadership test rallies you free."
     },
     {
       "id": "poisoned",
       "name": "Poisoned",
       "stacks": false,
       "category": "affliction",
-      "summary": "+2 DN to all tests. Ends when treated with Medicae or when you pass a Toughness test (DN set by the poison) at the start of your turn."
+      "summary": "The toxin puts +2 DN on every test. It ends with Medicae treatment, or by passing a Toughness test (DN set by the poison) as your turn starts."
     },
     {
       "id": "prone",
       "name": "Prone",
       "stacks": false,
       "category": "impairment",
-      "summary": "Knocked down: Defence -2 against attackers within 5m, but +1 Defence against attacks from 6m or more. Standing up is a Free Action (Standard Movement only that turn)."
+      "summary": "You're on the ground: Defence -2 against enemies within 5m, but +1 Defence against attacks from 6m or beyond. Getting up is a Free Action, though you're limited to Standard Movement that turn."
     },
     {
       "id": "restrained",
       "name": "Restrained",
       "stacks": false,
       "category": "impairment",
-      "summary": "You can't use your Movement and your Defence is reduced by 2."
+      "summary": "Held fast: your Movement is unavailable and your Defence drops by 2."
     },
     {
       "id": "staggered",
       "name": "Staggered",
       "stacks": false,
       "category": "impairment",
-      "summary": "Your Speed is halved when you move and you can't Run or Sprint. Lasts until the end of your next turn."
+      "summary": "You reel: Speed is halved when you move, and Running or Sprinting is impossible. Lasts through the end of your next turn."
     },
     {
       "id": "terror",
       "name": "Terror",
       "stacks": false,
       "category": "affliction",
-      "summary": "Roll Resolve vs the source's DN. On a failure you suffer all the effects of Fear and must flee using every action until you have no line of sight to the source. Fear bonuses/immunities also apply to Terror."
+      "summary": "Test Resolve against the source's DN. Failure inflicts everything Fear does, and you must spend every action fleeing until the source is out of your line of sight. Fear immunities and bonuses count against Terror too."
     },
     {
       "id": "vulnerable",
       "name": "Vulnerable",
       "stacks": false,
       "category": "impairment",
-      "summary": "Defence -1 (certain effects increase this penalty). Lasts until the end of your next turn."
+      "summary": "Your guard is open: Defence -1, and certain effects deepen the penalty. Gone at the end of your next turn."
     }
   ]
 }

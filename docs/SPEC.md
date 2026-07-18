@@ -514,10 +514,11 @@ traffic (WAF is the main thing that would move the needle).
 ## 16. Open Questions
 
 Rounds 1–2 are resolved (§2). Remaining:
-- **Q-B — Condition content. ✅ Resolved.** The 14 Core conditions + paraphrased tooltip summaries
-  are captured in `/data/conditions.json` (Appendix A) from the GM's verified reference. *Remaining
-  nit:* give the summaries one proof-read against the book before any **public** release (they're
-  paraphrased, but confirm no wording is too close to the original).
+- **Q-B — Condition content. ✅ Resolved.** The 14 Core conditions + tooltip summaries are captured
+  in `/data/conditions.json` (Appendix A). The pre-release proof-read landed 2026-07-18: several
+  summaries sat too close to the reference's phrasing, so every summary and general line was
+  rewritten in original wording (mechanics unchanged). *Remaining nit:* re-verify the mechanics
+  values (DNs, durations, effects) against the book at leisure.
 - **Q-C — Coarse-HP thresholds.** Accepted as 75/40/1/0% for now; revisit after a playtest.
 - **UX/Claude Design pass. ✅ Resolved (Rounds 3–4, D15–D24).** The GM Console + Player Screen review
   fed §5/§9 (mob acted flag, counter bounds, deferred note/custom, mob rename, chip categories);
@@ -531,7 +532,7 @@ Rounds 1–2 are resolved (§2). Remaining:
 
 | Risk | Mitigation |
 |---|---|
-| Condition text copyright-heavy | `conditions.json` ships **paraphrased** summaries (not verbatim) from the verified reference; proof-read before public release; presets + custom stay editable. |
+| Condition text copyright-heavy | `conditions.json` ships **original-wording paraphrases** — proof-read + rewritten 2026-07-18 (no verbatim rulebook or reference-site text); mechanics values pending a book re-check; presets + custom stay editable. |
 | Public abuse (endpoint hammering, code-guessing) | Token auth (edge-validated reads), API GW throttling, origin locked behind CloudFront, brief 403/404 caching, optional WAF (§12). |
 | Lost updates from concurrent edits / Glory pushes | Per-item writes, atomic counters, atomic log-append (§9). |
 | Polling staleness feels laggy | ~2s cache + 5s GM / 8s player poll (D27 — deliberate casual-table pace); mutations refresh immediately; tune cadence/TTL; WebSockets remain a later option. |
@@ -542,33 +543,35 @@ Rounds 1–2 are resolved (§2). Remaining:
 
 ## Appendix A — Condition help text (Core Rules)
 
-> Captured from the GM's verified reference and shipped as **`/data/conditions.json`**
-> (`{ id, name, stacks, category, summary }` + a `general` rules array — `category` drives chip
-> theming: `damage` / `affliction` / `impairment`, D19). Summaries are **concise paraphrases**
-> for tooltips, **not verbatim** rulebook text — proof-read before any public release. `stacks: true`
+> Shipped as **`/data/conditions.json`** (`{ id, name, stacks, category, summary }` + a `general`
+> rules array — `category` drives chip theming: `damage` / `affliction` / `impairment`, D19).
+> Summaries are **original-wording paraphrases** of Core Rules mechanics, written for these
+> tooltips — **not** rulebook text. Wording was proof-read and rewritten 2026-07-18 ahead of
+> open-sourcing; the mechanics values (DNs, durations, effects) come from the GM's reference —
+> re-verify them against the book when editing, and keep the wording original. `stacks: true`
 > conditions take a rank (e.g. *Hindered (2)*, *Bleeding (3)*).
 
-**General rules (shown as a "How conditions work" blurb):** conditions represent harm outside Wounds;
-a condition may end at the end of a scene (GM discretion) while some persist until treated; the same
-condition can apply more than once and stacks; similar penalties from different conditions don't stack
-(use the worst); Defence has a floor of 1.
+**General rules (shown as a "How conditions work" blurb):** conditions track harm beyond plain
+Wounds; the GM may let one lapse when a scene closes while some hang on until treated; repeats of
+the same condition add ranks (and ranked penalties add up); similar penalties from different
+conditions don't combine — apply the harshest; Defence never drops below 1.
 
 | Condition | Stacks | Short help (paraphrased) |
 |---|:--:|---|
-| Bleeding | ✓ | 1 Mortal Wound at the end of each of your turns (per rank); ends on a Toughness test (DN 4) or ally Medicae. |
-| Blinded |  | +4 DN to all sight-based tasks incl. every Combat test (replaces lesser vision penalties); removable with a Combat Action (GM discretion). |
-| Exhausted |  | Only Walk/Crawl, basic attack, or Fall Back; no Determination; Shock you take converts to Mortal Wounds; ends when you recover Shock. |
-| Fear |  | Roll Resolve vs source DN; on fail, +2 DN to all tests until scene end / an ally's Leadership test. |
-| Frenzied |  | Must charge & All-Out Attack the nearest enemy; immune to Fear, can't be Pinned, +1 Strength; resist with DN 3 Willpower at turn start. |
-| Hindered | ✓ | +1 DN to all tests per rank; lasts until the end of your next turn unless stated. |
-| On Fire |  | 1d3 Mortal Wounds at the start of each turn; go Prone + DN 3 Athletics to douse, or DN 3 Willpower to ignore (else Hindered). |
-| Pinned |  | Can't leave cover (move to nearest cover if exposed); +2 DN firing back at the pinner; ended by an ally's Leadership rally. |
-| Poisoned |  | +2 DN to all tests; ends via Medicae or a Toughness test at the start of your turn. |
-| Prone |  | Defence −2 vs attackers within 5m, +1 vs attacks from 6m+; standing up is a Free Action (Standard Movement only). |
-| Restrained |  | Can't use Movement; Defence −2. |
-| Staggered |  | Speed halved; can't Run/Sprint; lasts until the end of your next turn. |
-| Terror |  | Roll Resolve vs source DN; on fail suffer Fear's effects and must flee until out of line of sight. |
-| Vulnerable |  | Defence −1 (some effects increase it); lasts until the end of your next turn. |
+| Bleeding | ✓ | Each rank deals 1 Mortal Wound as your turn ends; stopped by a DN 4 Toughness test or an ally's Medicae. |
+| Blinded |  | +4 DN on anything needing sight, every Combat test included (overrides lesser sight penalties); GM may allow a Combat Action to clear it. |
+| Exhausted |  | Only Walk/Crawl, a basic attack, or Fall Back; no Determination; incoming Shock becomes Mortal Wounds; ends on Shock recovery. |
+| Fear |  | Resolve vs source DN; fail → +2 DN on every test until scene end or an ally's Leadership (Wil) test; Fear-causers are immune to Fear/Intimidation. |
+| Frenzied |  | Must charge the nearest visible enemy with All-Out Attacks; +1 Strength, immune to Fear, can't be Pinned; a DN 3 Willpower test at turn start ends it. |
+| Hindered | ✓ | +1 DN per rank on every test; fades at the end of your next turn unless the source says otherwise. |
+| On Fire |  | 1d3 Mortal Wounds as each turn starts; Action + drop Prone + DN 3 Athletics to douse, or DN 3 Willpower to fight on without becoming Hindered. |
+| Pinned |  | Stuck in cover (moving to the nearest if exposed); other actions allowed; +2 DN shooting your pinner; an ally's Leadership rally frees you. |
+| Poisoned |  | +2 DN on every test; cured by Medicae or a start-of-turn Toughness test vs the poison's DN. |
+| Prone |  | Defence −2 vs enemies within 5m, +1 vs attacks from 6m+; rising is a Free Action (Standard Movement only that turn). |
+| Restrained |  | Movement unavailable; Defence −2. |
+| Staggered |  | Speed halved; no Run/Sprint; through the end of your next turn. |
+| Terror |  | Resolve vs source DN; fail → all of Fear's effects, plus fleeing with every action until out of line of sight; Fear immunities apply. |
+| Vulnerable |  | Defence −1 (some effects deepen it); until the end of your next turn. |
 
 *Separate from these conditions, **status flags** track the defeated track (from Wounds/Shock, not the
 list above): **Down** (incapacitated), **Dying**, **Dead**, **Stable**.*
