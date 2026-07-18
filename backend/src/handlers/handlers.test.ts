@@ -410,6 +410,31 @@ describe('PATCH /sessions/{code}/players/{playerId} (updatePlayer)', () => {
     expect((low.body.player as Player).wounds).toBe(0);
   });
 
+  it('supports character setup: sets maxWounds/maxShock (clamped) and re-clamps the current track', async () => {
+    const { code, playerId, playerToken } = await admittedPlayer();
+
+    // The owner sets both setup maxes and both current tracks in one PATCH.
+    const set = parse(
+      await updatePlayer(
+        makeEvent({ code, playerId, token: playerToken, body: { maxWounds: 14, maxShock: 8, wounds: 14, shock: 8 } }),
+      ),
+    );
+    expect(set.status).toBe(200);
+    expect(set.body.player as Player).toMatchObject({ maxWounds: 14, wounds: 14, maxShock: 8, shock: 8 });
+
+    // Over-max setup values clamp to LIMITS (maxWounds ≤ 40, maxShock ≤ 20).
+    const clamped = parse(
+      await updatePlayer(makeEvent({ code, playerId, token: playerToken, body: { maxWounds: 100, maxShock: 100 } })),
+    );
+    expect(clamped.body.player as Player).toMatchObject({ maxWounds: 40, maxShock: 20 });
+
+    // Lowering maxWounds below the current wounds re-clamps the stored current down.
+    const lowered = parse(await updatePlayer(makeEvent({ code, playerId, token: playerToken, body: { maxWounds: 5 } })));
+    const p = lowered.body.player as Player;
+    expect(p.maxWounds).toBe(5);
+    expect(p.wounds).toBe(5); // was 14, re-clamped down to the new max
+  });
+
   it("rejects a different player's token with 403 but lets the GM edit anyone", async () => {
     const { code, gmToken, playerId } = await admittedPlayer();
 

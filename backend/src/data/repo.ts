@@ -168,7 +168,9 @@ export interface Hydrated {
 
 /** The subset of a Player that a Phase-1 PATCH may set. Only provided keys are written. */
 export interface PlayerPatch {
+  maxWounds?: number;
   wounds?: number;
+  maxShock?: number;
   shock?: number;
   wrath?: number;
   status?: PlayerStatus;
