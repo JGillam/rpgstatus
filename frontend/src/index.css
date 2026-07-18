@@ -98,6 +98,18 @@
  * A ring sized to the emblem scales outward and fades — applied via inline
  * `animation: waitring …` on one or more absolutely-centered ring spans.
  */
+/* Soft rise-in for the landing footer's "About this site" expandable. */
+@keyframes fadeup {
+  from {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes waitring {
   0% {
     transform: scale(0.72);
