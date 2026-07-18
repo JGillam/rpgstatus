@@ -223,8 +223,9 @@ Compact, append-only, attributed record of resource changes — cheap to store a
   but glanceability > flavor. Big numbers, strong contrast.
 - **Identity persistence:** each client stores its **token + role + session code + (player index)** in
   **localStorage** so a refresh/reboot returns straight to the session (D4/D13).
-- **Freshness cue:** a subtle "updated Xs ago"/live dot, since sync is polling (several seconds of
-  lag is expected and fine — casual-table pacing, D27).
+- **Freshness cue:** a subtle live dot only — green fresh, amber/orange as polls go missing,
+  pulsing while connecting. **No timer text** (users only need to know it IS syncing); text appears
+  only when the connection is actually lost. Polling lag of several seconds is expected (D27).
 
 ### 7.2 Landing / entry (all)
 Minimal, mobile-first: **"Start a session (GM)"** and a **"Join"** form (code + name). No login wall.

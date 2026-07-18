@@ -15,29 +15,39 @@ interface FreshnessDotProps {
 }
 
 /**
- * Small status dot + caption for the polled session state.
- * Amber pulse before the first sync, green when fresh, amber/orange as it ages,
- * red when the last poll errored.
+ * Sync-status dot for the polled session state. The light alone carries status —
+ * green when fresh, amber/orange as polls go missing, pulsing amber before the
+ * first sync. No timer text: players don't need the countdown, only that it IS
+ * syncing — text appears only when the connection is actually lost.
  */
 export function FreshnessDot({ secondsAgo, updatedAt, error, className }: FreshnessDotProps) {
   const connecting = updatedAt === null && !error;
 
   const color = error
-    ? 'bg-wounds'
+    ? 'var(--color-wounds)'
     : connecting
-      ? 'bg-minor animate-pulse'
+      ? 'var(--color-minor)'
       : secondsAgo <= FRESH_S
-        ? 'bg-status-active'
+        ? 'var(--color-status-active)'
         : secondsAgo <= AGING_S
-          ? 'bg-minor'
-          : 'bg-gravely';
-
-  const label = error ? 'connection lost' : connecting ? 'connecting…' : `updated ${secondsAgo}s ago`;
+          ? 'var(--color-minor)'
+          : 'var(--color-gravely)';
 
   return (
-    <span className={cn('inline-flex items-center gap-2 text-xs text-muted', className)}>
-      <span className={cn('inline-block size-2 rounded-full', color)} aria-hidden />
-      <span>{label}</span>
+    <span
+      className={cn('inline-flex items-center gap-2 text-xs text-muted', className)}
+      title={error ? undefined : `synced ${secondsAgo}s ago`}
+    >
+      <span
+        className={cn('inline-block size-2 rounded-full', connecting && 'animate-pulse')}
+        style={{ background: color, boxShadow: `0 0 7px ${color}` }}
+        aria-hidden
+      />
+      {error ? (
+        <span>connection lost</span>
+      ) : (
+        <span className="sr-only">{connecting ? 'connecting' : 'synced'}</span>
+      )}
     </span>
   );
 }

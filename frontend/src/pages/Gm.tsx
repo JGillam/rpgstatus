@@ -692,28 +692,34 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
 
 function FreshnessBadge({ freshness, chapterName }: { freshness: Freshness; chapterName?: string }) {
   const { secondsAgo, updatedAt, error } = freshness;
-  const { color, label } = error
-    ? { color: 'var(--color-wounds)', label: 'CONNECTION LOST' }
-    : updatedAt === null
-      ? { color: 'var(--color-minor)', label: 'CONNECTING…' }
-      : {
-          color:
-            secondsAgo <= 6
-              ? 'var(--color-status-active)'
-              : secondsAgo <= 15
-                ? 'var(--color-minor)'
-                : 'var(--color-gravely)',
-          label: `SYNCED ${secondsAgo}s`,
-        };
+  const connecting = updatedAt === null && !error;
+
+  const color = error
+    ? 'var(--color-wounds)'
+    : connecting
+      ? 'var(--color-minor)'
+      : secondsAgo <= 6
+        ? 'var(--color-status-active)'
+        : secondsAgo <= 15
+          ? 'var(--color-minor)'
+          : 'var(--color-gravely)';
+
+  // The light alone carries sync status — no timer text. The visible label is just
+  // the chapter name, plus an explicit callout only when the connection is lost.
+  const text = error ? [chapterName, 'CONNECTION LOST'].filter(Boolean).join(' · ') : chapterName;
 
   return (
-    <span className="inline-flex items-center gap-1.5 font-body text-[9px] font-semibold leading-none tracking-[1px] text-muted">
+    <span
+      className="inline-flex items-center gap-1.5 font-body text-[9px] font-semibold leading-none tracking-[1px] text-muted"
+      title={error ? undefined : `synced ${secondsAgo}s ago`}
+    >
       <span
-        className={cn('size-2 rounded-full', updatedAt === null && !error && 'animate-pulse')}
+        className={cn('size-2 rounded-full', connecting && 'animate-pulse')}
         style={{ background: color, boxShadow: `0 0 8px ${color}` }}
         aria-hidden
       />
-      {chapterName ? `${chapterName} · ${label}` : label}
+      {text}
+      {!error && <span className="sr-only">{connecting ? 'connecting' : 'synced'}</span>}
     </span>
   );
 }
