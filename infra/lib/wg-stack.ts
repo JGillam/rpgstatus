@@ -7,6 +7,7 @@ import { Construct } from 'constructs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
@@ -39,6 +40,15 @@ export class WgStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       timeToLiveAttribute: 'ttl',
       removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+    // Hard spend ceiling on on-demand throughput (cost armor, §12). Legit usage for a
+    // handful of concurrent tables is tens of RRU/s; the cap only bounds worst-case
+    // abuse if the API throttles are ever bypassed. Escape hatch: the L2 Table
+    // construct predates OnDemandThroughput, but CloudFormation applies it in place.
+    const cfnTable = table.node.defaultChild as dynamodb.CfnTable;
+    cfnTable.addPropertyOverride('OnDemandThroughput', {
+      MaxReadRequestUnits: 100,
+      MaxWriteRequestUnits: 50,
     });
 
     // 2. HMAC token secret (§12/D13); >= 32 chars.
@@ -79,6 +89,10 @@ export class WgStack extends cdk.Stack {
         depsLockFilePath: DEPS_LOCK,
         timeout: cdk.Duration.seconds(10),
         memorySize: 256,
+        // Two-week retention via the LogRetention custom resource — the log groups
+        // already exist (auto-created at first invoke), so an explicit logGroup
+        // resource would collide; the custom resource patches retention in place.
+        logRetention: logs.RetentionDays.TWO_WEEKS,
         environment: {
           TABLE_NAME: table.tableName,
           TOKEN_SECRET: tokenSecretValue,
@@ -186,13 +200,18 @@ export class WgStack extends cdk.Stack {
     // addPropertyOverride writes the template verbatim — use PascalCase keys. The L1 typed
     // properties (defaultRouteSettings/routeSettings) leaked camelCase field names, which
     // CloudFormation rejects on AWS::ApiGatewayV2::Stage RouteSettings.
+    // Limits are per route, so the stage-wide worst case is roughly
+    // default × route count — sized as a billing ceiling (~$2-3 per million requests
+    // through API GW + Lambda + DDB + logs), not as capacity. /state is the only hot
+    // legit path: one 10-player table polls at ~5 rps.
     cfnStage.addPropertyOverride('DefaultRouteSettings', {
-      ThrottlingRateLimit: 50,
-      ThrottlingBurstLimit: 30,
+      ThrottlingRateLimit: 10,
+      ThrottlingBurstLimit: 20,
     });
     cfnStage.addPropertyOverride('RouteSettings', {
       'POST /sessions': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 5 },
       'POST /sessions/{code}/join': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 5 },
+      'GET /state/{code}': { ThrottlingRateLimit: 25, ThrottlingBurstLimit: 50 },
     });
     // RouteSettings validate against existing route keys, so the stage must be created AFTER
     // the routes — otherwise "Unable to find Route by key POST /sessions".
@@ -287,6 +306,7 @@ export class WgStack extends cdk.Stack {
       distribution: appDistribution,
       distributionPaths: ['/*'],
       prune: true,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
     });
 
     // 9. Apex 302 redirect (D25: temporary → 302, NOT a 301, so NOT HttpsRedirect).
