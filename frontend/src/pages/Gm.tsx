@@ -41,6 +41,7 @@ import { useSessionState } from '@/lib/useSessionState';
 import { coarseColor, coarseLabel, statusColor, statusLabel } from '@/lib/theme';
 import { CONDITIONS, conditionDef } from '@/lib/conditions';
 import { Dialog } from '@/components/Dialog';
+import { ReconnectingBanner, Takeover } from '@/components/Takeover';
 import { cn } from '@/lib/utils';
 
 const STATUSES: PlayerStatus[] = ['active', 'down', 'dying', 'dead', 'stable'];
@@ -82,7 +83,7 @@ export default function Gm() {
   const identity = useMemo(() => loadIdentity(), []);
 
   const args = identity?.role === 'gm' ? { code: identity.code, token: identity.token } : null;
-  const { snapshot, secondsAgo, updatedAt, error, loading, refresh } =
+  const { snapshot, secondsAgo, updatedAt, error, status, loading, refresh } =
     useSessionState<GmSnapshot>(args);
 
   if (!identity || identity.role !== 'gm') return <Navigate to="/" replace />;
@@ -92,25 +93,34 @@ export default function Gm() {
     navigate('/', { replace: true });
   };
 
+  // Lifecycle takeover (SPEC §7.10): a retired/expired code (404/410) or an invalidated
+  // token (401/403) closes the console. If a poll already reflected 'ended', keep the GM's
+  // own ended overlay (rendered inside the console) rather than overriding it with 'expired'.
+  const endedByPoll = snapshot?.session.state === 'ended';
+  if ((status === 'gone' || status === 'unauthorized') && !endedByPoll) {
+    return <Takeover variant="expired" onBack={onEnded} backLabel="▸ START A NEW SESSION" />;
+  }
+
   if (!snapshot) {
     return (
       <div className="grid min-h-dvh place-items-center bg-bg px-6 text-center">
-        <p className="text-muted">
-          {loading ? 'Loading session…' : error ? 'Connection lost. Retrying…' : 'No session.'}
-        </p>
+        <p className="text-muted">{loading ? 'Loading session…' : 'Connection lost. Retrying…'}</p>
       </div>
     );
   }
 
   return (
-    <GmConsole
-      snapshot={snapshot}
-      code={identity.code}
-      token={identity.token}
-      freshness={{ secondsAgo, updatedAt, error: !!error }}
-      refresh={refresh}
-      onEnded={onEnded}
-    />
+    <>
+      {status === 'offline' && <ReconnectingBanner />}
+      <GmConsole
+        snapshot={snapshot}
+        code={identity.code}
+        token={identity.token}
+        freshness={{ secondsAgo, updatedAt, error: !!error }}
+        refresh={refresh}
+        onEnded={onEnded}
+      />
+    </>
   );
 }
 
@@ -591,8 +601,8 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
       {/* ---- End-session confirm ---- */}
       <EndSessionDialog open={confirm === 'end'} onClose={() => setConfirm(null)} onConfirm={confirmEnd} />
 
-      {/* ---- Ended overlay ---- */}
-      {ended && (
+      {/* ---- Ended overlay (self-initiated end, or a poll that reflected 'ended') ---- */}
+      {(ended || session.state === 'ended') && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-6"
           style={{ background: 'var(--color-bg-player)' }}

@@ -92,3 +92,22 @@
     font-family: var(--font-display);
   }
 }
+
+/*
+ * Expanding-ring pulse for the "waiting to be admitted" emblem (Waiting screen).
+ * A ring sized to the emblem scales outward and fades — applied via inline
+ * `animation: waitring …` on one or more absolutely-centered ring spans.
+ */
+@keyframes waitring {
+  0% {
+    transform: scale(0.72);
+    opacity: 0.55;
+  }
+  70% {
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.3);
+    opacity: 0;
+  }
+}

@@ -18,6 +18,7 @@ import { coarseColor, coarseLabel, statusColor, statusLabel } from '@/lib/theme'
 import { CONDITIONS, conditionDef } from '@/lib/conditions';
 import { FreshnessDot } from '@/components/FreshnessDot';
 import { BottomSheet } from '@/components/BottomSheet';
+import { ReconnectingBanner, Takeover } from '@/components/Takeover';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -46,7 +47,7 @@ export default function Play() {
   const identity = useMemo(() => loadIdentity(), []);
 
   const args = identity?.role === 'player' ? { code: identity.code, token: identity.token } : null;
-  const { snapshot, secondsAgo, updatedAt, error, loading, refresh } =
+  const { snapshot, secondsAgo, updatedAt, error, status, loading, refresh } =
     useSessionState<PlayerSnapshot>(args);
 
   if (!identity || identity.role !== 'player') return <Navigate to="/" replace />;
@@ -56,25 +57,35 @@ export default function Play() {
     navigate('/', { replace: true });
   };
 
+  // Lifecycle takeovers (SPEC §7.10). Terminal snapshot states win over transient ones:
+  // a session that has reflected 'ended' stays ended even after its item later 404s, since
+  // the last snapshot is retained across a failing poll.
+  const you = snapshot ? (snapshot.players.find((p) => p.id === snapshot.youId) ?? null) : null;
+  if (you?.presence === 'removed') return <Takeover variant="removed" onBack={leave} />;
+  if (snapshot?.session.state === 'ended') return <Takeover variant="ended" onBack={leave} />;
+  if (status === 'gone' || status === 'unauthorized')
+    return <Takeover variant="expired" onBack={leave} />;
+
   if (!snapshot) {
     return (
       <div className="grid min-h-dvh place-items-center bg-bg px-6 text-center">
-        <p className="text-muted">
-          {loading ? 'Loading session…' : error ? 'Connection lost. Retrying…' : 'No session.'}
-        </p>
+        <p className="text-muted">{loading ? 'Loading session…' : 'Connection lost. Retrying…'}</p>
       </div>
     );
   }
 
   return (
-    <PlayerBoard
-      snapshot={snapshot}
-      code={identity.code}
-      token={identity.token}
-      freshness={{ secondsAgo, updatedAt, error: !!error }}
-      onLeave={leave}
-      refresh={refresh}
-    />
+    <>
+      {status === 'offline' && <ReconnectingBanner />}
+      <PlayerBoard
+        snapshot={snapshot}
+        code={identity.code}
+        token={identity.token}
+        freshness={{ secondsAgo, updatedAt, error: !!error }}
+        onLeave={leave}
+        refresh={refresh}
+      />
+    </>
   );
 }
 

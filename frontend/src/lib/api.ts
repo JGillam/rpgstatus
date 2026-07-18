@@ -186,6 +186,10 @@ export async function getState<T extends GmSnapshot | PlayerSnapshot = GmSnapsho
 
 /** Fields a player may PATCH on their own card (all optional; server clamps/validates). */
 export interface PlayerPatch {
+  /** Character-setup max (D16 range). Raising/lowering re-clamps the current track server-side. */
+  maxWounds?: number;
+  /** Character-setup max (D16 range). Raising/lowering re-clamps the current track server-side. */
+  maxShock?: number;
   wounds?: number;
   shock?: number;
   wrath?: number;

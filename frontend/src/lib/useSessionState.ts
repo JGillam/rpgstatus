@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GmSnapshot, PlayerSnapshot } from '@domain';
-import { getState } from './api';
+import { ApiError, getState } from './api';
 
 /** Poll cadence (ms). ~2.5s balances freshness against the create/join throttle budget. */
 export const POLL_MS = 2500;
@@ -14,6 +14,26 @@ export interface SessionStateArgs {
   token: string;
 }
 
+/**
+ * Why the last poll landed where it did — lets callers render the right lifecycle
+ * takeover (SPEC §7.10) without inspecting raw errors:
+ *   loading      — no response yet on this identity
+ *   ok           — last poll succeeded (200 or 304)
+ *   unauthorized — 401/403: the token no longer opens this session (rejoin)
+ *   gone         — 404/410: the session/code is retired (expired)
+ *   offline      — a transient failure (network / 5xx): reconnecting, keep last snapshot
+ */
+export type PollStatus = 'loading' | 'ok' | 'unauthorized' | 'gone' | 'offline';
+
+/** Map a caught poll error to its lifecycle-relevant kind. */
+function classifyError(e: unknown): PollStatus {
+  if (e instanceof ApiError) {
+    if (e.status === 404 || e.status === 410) return 'gone';
+    if (e.status === 401 || e.status === 403) return 'unauthorized';
+  }
+  return 'offline';
+}
+
 export interface UseSessionState<T> {
   snapshot: T | null;
   /** Epoch ms of the last successful sync (200 or 304), or null before the first. */
@@ -21,6 +41,8 @@ export interface UseSessionState<T> {
   /** Whole seconds since `updatedAt`, ticking every second for a freshness indicator. */
   secondsAgo: number;
   error: Error | null;
+  /** Discriminated reason for the last poll's outcome (see PollStatus). */
+  status: PollStatus;
   loading: boolean;
   /** Force an immediate poll (e.g. on a manual refresh or when the tab regains focus). */
   refresh: () => void;
@@ -33,6 +55,7 @@ export function useSessionState<T extends GmSnapshot | PlayerSnapshot = GmSnapsh
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [secondsAgo, setSecondsAgo] = useState(0);
   const [error, setError] = useState<Error | null>(null);
+  const [status, setStatus] = useState<PollStatus>('loading');
   const [loading, setLoading] = useState(true);
 
   const etagRef = useRef<string | null>(null);
@@ -53,6 +76,7 @@ export function useSessionState<T extends GmSnapshot | PlayerSnapshot = GmSnapsh
     etagRef.current = null;
     setSnapshot(null);
     setError(null);
+    setStatus('loading');
     setLoading(true);
 
     const run = async () => {
@@ -70,9 +94,11 @@ export function useSessionState<T extends GmSnapshot | PlayerSnapshot = GmSnapsh
         setUpdatedAt(now);
         setSecondsAgo(0);
         setError(null);
+        setStatus('ok');
       } catch (e) {
         if (!active || ac.signal.aborted) return;
         setError(e instanceof Error ? e : new Error(String(e)));
+        setStatus(classifyError(e));
       } finally {
         // Clear the ref once THIS request settles (unless a newer one already
         // superseded it) so the next tick's abort() only ever targets a genuinely
@@ -113,5 +139,5 @@ export function useSessionState<T extends GmSnapshot | PlayerSnapshot = GmSnapsh
 
   const refresh = useCallback(() => runRef.current(), []);
 
-  return { snapshot, updatedAt, secondsAgo, error, loading, refresh };
+  return { snapshot, updatedAt, secondsAgo, error, status, loading, refresh };
 }
