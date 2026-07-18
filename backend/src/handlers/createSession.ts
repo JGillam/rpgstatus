@@ -82,6 +82,7 @@ export const handler = async (
       round: 1,
       settings: { chapterName },
       createdAt: now,
+      expiresAt: now + SESSION_TTL_SECONDS,
     };
 
     const gmToken = signToken({ code, role: 'gm', exp: now + TOKEN_TTL_SECONDS }, tokenSecret());

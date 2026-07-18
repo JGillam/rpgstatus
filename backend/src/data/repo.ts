@@ -107,7 +107,9 @@ const logKey = (code: string) => ({ PK: pk(code), SK: 'LOG' });
 
 // ---------------------------------------------------------------------------
 // Mappers — DB item → pure domain shape. These are the ONLY exit from the data
-// layer; each explicitly picks domain fields, dropping PK/SK/ttl/*Hash.
+// layer; each explicitly picks domain fields, dropping PK/SK/*Hash and per-item
+// ttl — except the META ttl, surfaced as SessionMeta.expiresAt (the session's
+// user-facing sliding expiry, §7.6).
 // ---------------------------------------------------------------------------
 
 export function toSessionMeta(it: SessionItem): SessionMeta {
@@ -120,6 +122,7 @@ export function toSessionMeta(it: SessionItem): SessionMeta {
     round: it.round,
     settings: it.settings ?? {},
     createdAt: it.createdAt,
+    expiresAt: it.ttl,
   };
 }
 

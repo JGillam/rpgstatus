@@ -4,8 +4,8 @@
     {
       "name": "frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--workspace", "@wg/frontend", "--", "--port", "5173", "--strictPort"],
-      "port": 5173
+      "runtimeArgs": ["run", "dev", "--workspace", "@wg/frontend", "--", "--port", "5177", "--strictPort"],
+      "port": 5177
     }
   ]
 }

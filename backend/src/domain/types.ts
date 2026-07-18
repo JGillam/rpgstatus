@@ -118,7 +118,7 @@ export interface LogEntryView {
   ts: number;
 }
 
-/** Session meta (GM/client view). gmTokenHash, nextPlayerIndex and ttl are DB-only. */
+/** Session meta (GM/client view). gmTokenHash and nextPlayerIndex are DB-only. */
 export interface SessionMeta {
   code: string;
   state: SessionState;
@@ -128,6 +128,12 @@ export interface SessionMeta {
   round: number;
   settings: SessionSettings;
   createdAt: number;
+  /**
+   * Epoch seconds when the session TTLs out (§9.2) — the META item's ttl, surfaced
+   * for the GM header's "Expires in Nd Nh" (§7.6). Sliding: every write refreshes
+   * the 3-day window, so this moves forward with table activity.
+   */
+  expiresAt: number;
 }
 
 /** Player projection of session meta: ruin === null when hidden by showRuin. */

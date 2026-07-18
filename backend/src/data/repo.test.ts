@@ -22,6 +22,8 @@ function baseMeta(code: string): SessionMeta {
     round: 1,
     settings: { chapterName: 'Chapter One' },
     createdAt: NOW,
+    // Mirrors the stored ttl: getMeta round-trips this as the sliding expiry (§7.6).
+    expiresAt: NOW + THREE_DAYS,
   };
 }
 

@@ -273,6 +273,10 @@ describe('GET /state/{code} (getState)', () => {
     expect(res.status).toBe(200);
     const snap = res.body as GmSnapshot;
     expect(snap.session.ruin).toBe(5); // GM sees Ruin regardless of showRuin
+    // Sliding 3-day expiry surfaced for the GM header's "Expires in Nd Nh" (§7.6).
+    const expectedExpiry = nowSec() + 3 * 24 * 3600;
+    expect(snap.session.expiresAt).toBeGreaterThan(expectedExpiry - 5);
+    expect(snap.session.expiresAt).toBeLessThanOrEqual(expectedExpiry + 5);
     expect(snap.players).toHaveLength(1);
     expect(snap.mobs).toHaveLength(2); // hidden mob included for GM
     const m1 = snap.mobs.find((m) => m.id === 'm1')!;

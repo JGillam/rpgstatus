@@ -55,6 +55,7 @@ const mkSession = (over: Partial<SessionMeta> = {}): SessionMeta => ({
   round: 2,
   settings: {},
   createdAt: 0,
+  expiresAt: 3 * 24 * 3600,
   ...over,
 });
 

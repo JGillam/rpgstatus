@@ -505,7 +505,15 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
               </span>
             </div>
 
-            <FreshnessBadge freshness={freshness} chapterName={chapterName} />
+            <div className="flex flex-col items-end gap-[5px]">
+              <FreshnessBadge freshness={freshness} chapterName={chapterName} />
+              {/* Guard: absent from snapshots served by a pre-expiresAt backend (rollout skew). */}
+              {Number.isFinite(session.expiresAt) && (
+                <span className="font-body text-[9px] font-medium italic leading-none text-faint">
+                  Expires in {expiresIn(session.expiresAt)}
+                </span>
+              )}
+            </div>
 
             <button
               type="button"
@@ -2209,4 +2217,15 @@ function parseIntOrNull(s: string): number | null {
 
 function fmtTime(tsSeconds: number): string {
   return new Date(tsSeconds * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+/** "2d 4h" / "4h 23m" / "37m" until the session's sliding TTL (§7.6 GM header). */
+function expiresIn(expiresAtSec: number): string {
+  const s = Math.max(0, expiresAtSec - Math.floor(Date.now() / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d >= 1) return `${d}d ${h}h`;
+  if (h >= 1) return `${h}h ${m}m`;
+  return `${Math.max(1, m)}m`;
 }
