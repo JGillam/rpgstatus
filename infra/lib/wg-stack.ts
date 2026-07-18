@@ -18,6 +18,10 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as eventTargets from 'aws-cdk-lib/aws-events-targets';
+import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 
 // Domain + DNS (D25). The hosted zone pre-exists in the target AWS account.
 // Self-hosters: replace these constants with your own domain + hosted zone.
@@ -40,6 +44,8 @@ export class WgStack extends cdk.Stack {
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       timeToLiveAttribute: 'ttl',
+      // Feeds the D28 stats harvest: TTL reaps stream the deleted item's final image.
+      stream: dynamodb.StreamViewType.OLD_IMAGE,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
     // Hard spend ceiling on on-demand throughput (cost armor, §12). Legit usage for a
@@ -82,7 +88,7 @@ export class WgStack extends cdk.Stack {
         'const __filename=_ffp(import.meta.url);const __dirname=_dn(__filename);',
     };
 
-    const makeHandler = (name: string): nodejs.NodejsFunction =>
+    const makeHandler = (name: string, environment?: Record<string, string>): nodejs.NodejsFunction =>
       new nodejs.NodejsFunction(this, `Fn-${name}`, {
         runtime: lambda.Runtime.NODEJS_20_X,
         entry: path.join(HANDLERS_DIR, `${name}.ts`),
@@ -94,7 +100,7 @@ export class WgStack extends cdk.Stack {
         // already exist (auto-created at first invoke), so an explicit logGroup
         // resource would collide; the custom resource patches retention in place.
         logRetention: logs.RetentionDays.TWO_WEEKS,
-        environment: {
+        environment: environment ?? {
           TABLE_NAME: table.tableName,
           TOKEN_SECRET: tokenSecretValue,
         },
@@ -133,6 +139,56 @@ export class WgStack extends cdk.Stack {
       mobsFn,
     ]) {
       table.grantReadWriteData(fn);
+    }
+
+    // 3b. Anonymous usage stats (D28). TTL-reaped META items stream to a harvest fn
+    // that writes permanent STATS# rows (counts only — no names/codes) back into the
+    // same table. The event filter narrows invokes to exactly "the DynamoDB TTL
+    // service REMOVEd a session META item" — live-session writes never invoke it.
+    const statsHarvestFn = makeHandler('statsHarvest', { TABLE_NAME: table.tableName });
+    table.grantWriteData(statsHarvestFn);
+    statsHarvestFn.addEventSource(
+      new DynamoEventSource(table, {
+        startingPosition: lambda.StartingPosition.LATEST,
+        batchSize: 25,
+        retryAttempts: 2,
+        filters: [
+          lambda.FilterCriteria.filter({
+            eventName: lambda.FilterRule.isEqual('REMOVE'),
+            userIdentity: {
+              type: lambda.FilterRule.isEqual('Service'),
+              principalId: lambda.FilterRule.isEqual('dynamodb.amazonaws.com'),
+            },
+            dynamodb: { Keys: { SK: { S: lambda.FilterRule.isEqual('META') } } },
+          }),
+        ],
+      }),
+    );
+
+    // Weekly email report — created only when a statsEmail is provided, so no personal
+    // address lives in the repo: put `{ "statsEmail": "you@example.com" }` in the
+    // gitignored infra/cdk.context.json (or pass `-c statsEmail=...`). The address must
+    // be SES-verified in this region; without it, stats still accumulate, no email.
+    const statsEmail = this.node.tryGetContext('statsEmail') as string | undefined;
+    if (statsEmail) {
+      const statsReportFn = makeHandler('statsReport', {
+        TABLE_NAME: table.tableName,
+        STATS_EMAIL: statsEmail,
+        STATS_START_MONTH: '2026-07',
+      });
+      table.grantReadData(statsReportFn);
+      statsReportFn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['ses:SendEmail'],
+          resources: [`arn:aws:ses:${this.region}:${this.account}:identity/${statsEmail}`],
+        }),
+      );
+      // Mondays 13:00 UTC ≈ 9am US-Eastern in summer (8am in winter).
+      new events.Rule(this, 'StatsWeeklyRule', {
+        description: 'Weekly anonymous usage-stats email (D28)',
+        schedule: events.Schedule.cron({ minute: '0', hour: '13', weekDay: 'MON' }),
+        targets: [new eventTargets.LambdaFunction(statsReportFn)],
+      });
     }
 
     // 4. HTTP API (D12). The auto-created `$default` stage serves routes at the root

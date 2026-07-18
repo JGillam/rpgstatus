@@ -237,7 +237,8 @@ const ABOUT_ITEMS: ReactNode[] = [
   <>
     No accounts, no personal data collected. The names and stats you enter exist only to run your
     session and are deleted automatically within 72 hours. By using this site you consent to this
-    temporary storage.
+    temporary storage. Anonymous, aggregate usage counts (sessions, players per session, rounds)
+    are kept — never names or codes.
   </>,
   <>
     Open source under the AGPL-3.0 license. Browse the code, report bugs, suggest features, or run

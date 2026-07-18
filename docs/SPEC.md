@@ -86,6 +86,11 @@ bar on **abuse resistance**.
 |---|---|
 | D27 | **Casual-table poll cadence, not RTS sync.** The original ~2.5s shared poll made the freshness badge flip 0s↔1s and burned request budget for no table benefit. New cadence: **GM console 5s** (admits/table control lead), **player screen 8s** (passive board — deliberately the slower end), **waiting-room claim stays 2.5s** (admission should land promptly). Mutations still trigger an **immediate refresh** for reconcile, and returning to a tab polls at once — only *passive* staleness grows. Freshness-indicator thresholds derive from the cadence so a healthy cycle always reads "fresh". |
 
+### Round 8 (2026-07-18) — Usage stats
+| # | Decision |
+|---|---|
+| D28 | **Anonymous usage stats via TTL-reap harvesting.** A DynamoDB **Stream** (OLD_IMAGE) on the single table feeds a harvest Lambda whose event filter matches exactly "the DynamoDB TTL service REMOVEd a `META` item" (`userIdentity.principalId = dynamodb.amazonaws.com`, `SK = META`). At reap it writes one **permanent** row — `STATS#<yyyy-mm>` / `S#<createdAt>#<eventId>` with `{created, players (= nextPlayerIndex), rounds, state, harvestedAt}` — **no names, no join codes, no `ttl`**. Zero writes on the hot path; the SK reuses the stream eventID so retries overwrite instead of double-count. An **optional weekly reporter** (created only when the gitignored `statsEmail` CDK context is set — no personal address in the repo) aggregates the month partitions over `harvestedAt` (each session lands in exactly one email) and sends via SES. Counts trail creation by the TTL reap (~3–5 days). The landing footer's privacy bullet discloses the aggregate counts. |
+
 ---
 
 ## 3. Goals & Non-Goals
@@ -356,6 +361,7 @@ One table, on-demand, **TTL (3 days)**. All of a session's items share the parti
 | Player | `SESSION#<code>` | `PLAYER#<id>` | `index`, `name`, `maxWounds`, `wounds`, `maxShock`, `shock`, `wrath`, `conditions[]`, `status`, `actedThisRound`, `presence`, `playerTokenHash`, `joinedAt`, `ttl` |
 | Mob | `SESSION#<code>` | `MOB#<id>` | `label`, `tier`, `maxHp`, `hp`, `revealed`, `actedThisRound`, `conditions[]`, `ttl` |
 | Log | `SESSION#<code>` | `LOG` | `e` (list of `[actorIndex, delta, typeCode, ts]`), `ttl` |
+| Session stats (D28) | `STATS#<yyyy-mm>` | `S#<createdAt>#<eventId>` | `created`, `players`, `rounds`, `state`, `harvestedAt` — written by the harvest Lambda at TTL reap; **permanent (no `ttl`)** |
 
 ### 9.1 Access patterns
 - **Hydrate board:** `Query PK = SESSION#<code>` → meta + players + mobs + log in one call. The read
@@ -374,7 +380,8 @@ One table, on-demand, **TTL (3 days)**. All of a session's items share the parti
 
 ### 9.2 Lifecycle & cleanup
 - **TTL (3 days)** auto-deletes an entire session — no teardown, satisfies retention with zero ops.
-  (The GM's exported log file is the only thing that outlives a session, and it lives on their disk.)
+  (The GM's exported log file is the only thing that outlives a session, and it lives on their
+  disk — plus the anonymous D28 stats row harvested from the reap itself.)
 - Server is source of truth; concurrent edits to different items never conflict; shared counters are
   atomic → **"several people editing at once" is structurally a non-issue.**
 

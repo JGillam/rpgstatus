@@ -57,6 +57,10 @@ You can run your own copy in your own AWS account:
 4. `npm run build --workspace @wg/frontend` — the stack ships `frontend/dist` to S3.
 5. `cd infra && npx cdk deploy` with credentials for your account. The region must be
    **us-east-1** (CloudFront ACM certificates and CloudFront Functions require it).
+6. *(Optional)* Weekly usage-stats email: put `{ "statsEmail": "you@example.com" }` in
+   `infra/cdk.context.json` (gitignored) — the address must be verified in SES in the deploy
+   region. Without it, anonymous per-session stats still accumulate in the table and no email
+   is sent.
 
 The deploy output prints your API endpoint and CloudFront domains.
 
@@ -90,7 +94,9 @@ every line.
 ## Privacy
 
 No accounts, no analytics, no personal data beyond the display names players type in — and every
-session is deleted automatically within 72 hours.
+session is deleted automatically within 72 hours. The deployment keeps anonymous, aggregate usage
+counts (sessions, players per session, rounds) harvested as sessions expire — never names or
+join codes.
 
 ## License
 
