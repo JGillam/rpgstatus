@@ -435,6 +435,24 @@ describe('PATCH /sessions/{code}/players/{playerId} (updatePlayer)', () => {
     expect(p.wounds).toBe(5); // was 14, re-clamped down to the new max
   });
 
+  it("lets the GM correct another hero's maxima post-start (✎ hero-edit, D26)", async () => {
+    const { code, gmToken, playerId, playerToken } = await admittedPlayer();
+
+    // The player finished setup at 14/14 wounds, 8/8 shock…
+    await updatePlayer(
+      makeEvent({ code, playerId, token: playerToken, body: { maxWounds: 14, maxShock: 8, wounds: 14, shock: 8 } }),
+    );
+
+    // …but got a max wrong, so the GM corrects both with the GM token. Lowering
+    // maxWounds re-clamps the current down; maxShock still clamps to LIMITS (≤20)
+    // and the current shock (8) survives because it fits under the new max.
+    const fixed = parse(
+      await updatePlayer(makeEvent({ code, playerId, token: gmToken, body: { maxWounds: 11, maxShock: 100 } })),
+    );
+    expect(fixed.status).toBe(200);
+    expect(fixed.body.player as Player).toMatchObject({ maxWounds: 11, wounds: 11, maxShock: 20, shock: 8 });
+  });
+
   it("rejects a different player's token with 403 but lets the GM edit anyone", async () => {
     const { code, gmToken, playerId } = await admittedPlayer();
 

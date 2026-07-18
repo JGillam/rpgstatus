@@ -12,6 +12,7 @@ import type {
   SessionMeta,
 } from '@domain';
 import {
+  clamp,
   clampCurrent,
   clampWrath,
   coarse,
@@ -35,6 +36,7 @@ import {
   updatePlayer,
   updateSession,
   type AddMobsInput,
+  type PlayerPatch,
 } from '@/lib/api';
 import { clearIdentity, loadIdentity } from '@/lib/identity';
 import { useSessionState } from '@/lib/useSessionState';
@@ -73,6 +75,19 @@ interface Freshness {
 
 /** Target of the shared condition picker — a player card or a mob row. */
 type CondTarget = { kind: 'player'; id: string } | { kind: 'mob'; id: string };
+
+/**
+ * Open-time snapshot backing the ✎ hero-edit dialog (D26). Captured when the dialog
+ * opens so a mid-edit poll can't clobber what the GM is looking at.
+ */
+interface HeroEditTarget {
+  id: string;
+  name: string;
+  maxWounds: number;
+  maxShock: number;
+  wounds: number;
+  shock: number;
+}
 
 // ---------------------------------------------------------------------------
 // Route entry: identity guard + polling, then hand off to the console.
@@ -203,6 +218,7 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
   const [condTarget, setCondTarget] = useState<CondTarget | null>(null);
   const [tooltipId, setTooltipId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [editHero, setEditHero] = useState<HeroEditTarget | null>(null);
   // `confirm === 'round'` drives the INLINE round confirm inside the Round Control card;
   // `confirm === 'end'` drives the End-session modal. `ended` shows the farewell overlay.
   const [confirm, setConfirm] = useState<'end' | 'round' | null>(null);
@@ -236,12 +252,15 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
     );
   }
 
-  function patchPlayer(id: string, patch: Partial<Player>) {
+  // `body` is what actually goes over the wire when the optimistic overlay needs to
+  // show MORE than we send (e.g. a max edit overlays the re-clamped current tracks but
+  // sends only the maxes — the server re-clamps against ITS current values).
+  function patchPlayer(id: string, patch: Partial<Player>, body: PlayerPatch = patch) {
     setPlayerOv((o) => ({ ...o, [id]: { ...o[id], ...patch } }));
     enqueue(
       `player:${id}`,
       async () => {
-        await updatePlayer(code, token, id, patch);
+        await updatePlayer(code, token, id, body);
       },
       () => setPlayerOv({}),
     );
@@ -316,6 +335,15 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
       if (status !== p.status) patchPlayer(p.id, { status });
     },
     onActed: (p) => patchPlayer(p.id, { actedThisRound: !p.actedThisRound }),
+    onEdit: (p) =>
+      setEditHero({
+        id: p.id,
+        name: p.name,
+        maxWounds: p.maxWounds,
+        maxShock: p.maxShock,
+        wounds: p.wounds,
+        shock: p.shock,
+      }),
     onKick: (p) => {
       setHidden((s) => new Set(s).add(p.id));
       void kick(code, p.id, token).then(refresh).catch(() => undefined);
@@ -377,6 +405,26 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
     if (!next) return; // already applied & doesn't stack
     if (condTarget.kind === 'player') patchPlayer(condTarget.id, { conditions: next });
     else patchMob(condTarget.id, { conditions: next });
+  };
+
+  // --- hero-edit (✎ — GM corrects setup maximums, D26) ----------------------
+  const saveHeroEdit = (maxWounds: number, maxShock: number) => {
+    const id = editHero?.id;
+    setEditHero(null);
+    const p = id ? players.find((x) => x.id === id) : undefined;
+    if (!p || (maxWounds === p.maxWounds && maxShock === p.maxShock)) return;
+    patchPlayer(
+      p.id,
+      // Overlay mirrors the server's re-clamp of the current tracks…
+      {
+        maxWounds,
+        maxShock,
+        wounds: clampCurrent(p.wounds, maxWounds),
+        shock: clampCurrent(p.shock, maxShock),
+      },
+      // …but only the maxes go over the wire (currents stay server-authoritative).
+      { maxWounds, maxShock },
+    );
   };
 
   // --- add-mob / end-session ------------------------------------------------
@@ -597,6 +645,9 @@ function GmConsole({ snapshot, code, token, freshness, refresh, onEnded }: Conso
 
       {/* ---- Add-mob dialog ---- */}
       <AddMobDialog open={addOpen} onClose={() => setAddOpen(false)} onSubmit={submitAddMobs} />
+
+      {/* ---- Hero-edit dialog (✎ — correct setup maximums) ---- */}
+      <HeroEditDialog hero={editHero} onClose={() => setEditHero(null)} onSave={saveHeroEdit} />
 
       {/* ---- End-session confirm ---- */}
       <EndSessionDialog open={confirm === 'end'} onClose={() => setConfirm(null)} onConfirm={confirmEnd} />
@@ -942,6 +993,7 @@ interface PlayerActions {
   onWrath: (p: Player, d: number) => void;
   onStatus: (p: Player, s: PlayerStatus) => void;
   onActed: (p: Player) => void;
+  onEdit: (p: Player) => void;
   onKick: (p: Player) => void;
   onOpenConditions: (p: Player) => void;
   onRemoveCondition: (p: Player, id: string) => void;
@@ -1005,6 +1057,15 @@ function PlayerCard({ p, actions }: { p: Player; actions: PlayerActions }) {
         <div className="flex shrink-0 items-center gap-1.5">
           {p.status === 'active' && <ActedButton acted={p.actedThisRound} onClick={() => actions.onActed(p)} />}
           <StatusSelect value={p.status} onChange={(s) => actions.onStatus(p, s)} />
+          <button
+            type="button"
+            aria-label={`Edit ${p.name}`}
+            title="Edit hero"
+            onClick={() => actions.onEdit(p)}
+            className="rounded-[3px] border border-default bg-transparent px-2 py-1.5 font-display text-[12px] font-semibold leading-none text-muted transition-colors hover:border-gold hover:text-gold"
+          >
+            ✎
+          </button>
           <button
             type="button"
             aria-label={`Kick ${p.name}`}
@@ -1713,6 +1774,180 @@ function FieldLabel({ children }: { children: ReactNode }) {
 }
 
 // ---------------------------------------------------------------------------
+// Hero-edit dialog (✎ on a party card — GM corrects setup maximums, D26)
+// ---------------------------------------------------------------------------
+
+function HeroEditDialog({
+  hero,
+  onClose,
+  onSave,
+}: {
+  hero: HeroEditTarget | null;
+  onClose: () => void;
+  onSave: (maxWounds: number, maxShock: number) => void;
+}) {
+  const [wounds, setWounds] = useState('');
+  const [shock, setShock] = useState('');
+  // `prev` keeps the last target so the content survives the Dialog's exit fade.
+  const [prev, setPrev] = useState<HeroEditTarget | null>(null);
+
+  // `hero` is an open-time snapshot with stable identity, so this resets the drafts
+  // once per open — a poll re-render can't clobber what the GM is typing.
+  useEffect(() => {
+    if (hero) {
+      setPrev(hero);
+      setWounds(String(hero.maxWounds));
+      setShock(String(hero.maxShock));
+    }
+  }, [hero]);
+
+  const view = hero ?? prev;
+  const w = parseIntOrNull(wounds);
+  const s = parseIntOrNull(shock);
+  const valid = w !== null && s !== null;
+
+  const commit = () => {
+    if (!hero || w === null || s === null) return;
+    onSave(
+      clamp(w, LIMITS.maxWounds.min, LIMITS.maxWounds.max),
+      clamp(s, LIMITS.maxShock.min, LIMITS.maxShock.max),
+    );
+  };
+
+  const stepWounds = (d: number) =>
+    setWounds((v) =>
+      String(
+        clamp(
+          (parseIntOrNull(v) ?? view?.maxWounds ?? LIMITS.maxWounds.min) + d,
+          LIMITS.maxWounds.min,
+          LIMITS.maxWounds.max,
+        ),
+      ),
+    );
+  const stepShock = (d: number) =>
+    setShock((v) =>
+      String(
+        clamp(
+          (parseIntOrNull(v) ?? view?.maxShock ?? LIMITS.maxShock.min) + d,
+          LIMITS.maxShock.min,
+          LIMITS.maxShock.max,
+        ),
+      ),
+    );
+
+  return (
+    <Dialog
+      open={hero !== null}
+      onClose={onClose}
+      widthClass="max-w-[420px]"
+      title={
+        <span className="flex flex-col gap-1">
+          <span>Edit {view?.name}</span>
+          <span className="font-body text-[11px] font-normal italic tracking-normal text-muted">
+            Correct the maximums set during setup
+          </span>
+        </span>
+      }
+      footer={
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded border border-default bg-transparent px-4 py-2.5 font-display text-[11px] font-semibold leading-none tracking-[0.5px] text-muted transition-colors hover:border-emphasis hover:text-text"
+          >
+            CANCEL
+          </button>
+          <button
+            type="button"
+            onClick={commit}
+            disabled={!valid}
+            className="rounded bg-gold px-[18px] py-2.5 font-display text-[11px] font-bold leading-none tracking-[1px] text-on-gold transition-colors hover:bg-gold-hi disabled:opacity-50"
+          >
+            SAVE CHANGES
+          </button>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-3.5">
+        <FieldLabel>MAXIMUMS</FieldLabel>
+        <div className="flex gap-3.5">
+          <MaxField
+            label="MAX WOUNDS"
+            color="var(--color-wounds)"
+            value={wounds}
+            now={view?.wounds ?? 0}
+            onChange={setWounds}
+            onStep={stepWounds}
+            onEnter={commit}
+          />
+          <MaxField
+            label="MAX SHOCK"
+            color="var(--color-shock)"
+            value={shock}
+            now={view?.shock ?? 0}
+            onChange={setShock}
+            onStep={stepShock}
+            onEnter={commit}
+          />
+        </div>
+        <span className="font-body text-[10px] italic leading-[1.4] text-faint">
+          Lowering a maximum below the current value pulls the current down to match.
+        </span>
+      </div>
+    </Dialog>
+  );
+}
+
+/** One stepper column of the hero-edit dialog: label, − input +, "now at N" caption. */
+function MaxField({
+  label,
+  color,
+  value,
+  now,
+  onChange,
+  onStep,
+  onEnter,
+}: {
+  label: string;
+  color: string;
+  value: string;
+  now: number;
+  onChange: (v: string) => void;
+  onStep: (d: number) => void;
+  onEnter: () => void;
+}) {
+  const stepClass =
+    'grid h-8 w-[34px] shrink-0 place-items-center rounded-[3px] border border-default bg-raised font-display text-base font-semibold leading-none text-text-2 transition-colors hover:enabled:text-text disabled:opacity-40';
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-[7px]">
+      <FieldLabel>{label}</FieldLabel>
+      <div className="flex items-center gap-1.5 rounded border border-default bg-bg p-1">
+        <button type="button" aria-label={`Decrease ${label.toLowerCase()}`} onClick={() => onStep(-1)} className={stepClass}>
+          −
+        </button>
+        <input
+          type="number"
+          inputMode="numeric"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={(e) => e.currentTarget.select()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onEnter();
+          }}
+          aria-label={label.toLowerCase()}
+          className="min-w-0 flex-1 bg-transparent text-center font-display text-[17px] font-bold leading-none outline-none"
+          style={{ color }}
+        />
+        <button type="button" aria-label={`Increase ${label.toLowerCase()}`} onClick={() => onStep(1)} className={stepClass}>
+          +
+        </button>
+      </div>
+      <span className="font-body text-[10px] italic leading-[1.35] text-faint">now at {now}</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // End-session dialog
 // ---------------------------------------------------------------------------
 
@@ -1955,6 +2190,12 @@ function withConditionAdded(list: AppliedCondition[], id: string): AppliedCondit
 
 function withConditionRemoved(list: AppliedCondition[], id: string): AppliedCondition[] {
   return list.filter((c) => c.id !== id);
+}
+
+/** Strict base-10 parse for draft fields: '' / junk → null (never NaN). */
+function parseIntOrNull(s: string): number | null {
+  const n = Number.parseInt(s, 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 function fmtTime(tsSeconds: number): string {

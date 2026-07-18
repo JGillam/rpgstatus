@@ -1,7 +1,7 @@
 # Wrath & Glory Session Assistant — Design Spec
 
-**Status:** v0.6 — rounds 1–5 folded in; rounds 3–4 = Claude Design review, round 5 = domain & hosting.
-**Last updated:** 2026-07-17
+**Status:** v0.7 — rounds 1–6 folded in; rounds 3–4 = Claude Design review, round 5 = domain & hosting, round 6 = post-start max correction.
+**Last updated:** 2026-07-18
 
 ---
 
@@ -75,6 +75,11 @@ bar on **abuse resistance**.
 | # | Decision |
 |---|---|
 | D25 | **Domain = `rpgstatus.com`** (newly registered; Route 53 hosted zone already exists in the `jason-deploy` account). The app is served at **`wrathandglory.rpgstatus.com`**; the **apex `rpgstatus.com` redirects** (temporary **302** — the apex may later become a multi-game hub) to that host. **ACM cert (us-east-1)** covers `rpgstatus.com` + **`*.rpgstatus.com`** (wildcard future-proofs one subdomain per game, deferred). Redirect implemented as a **302 via a dedicated apex CloudFront distribution + a CloudFront Function** (not `HttpsRedirect`, which only emits a 301). Wired in step 3 (infra). |
+
+### Round 6 (2026-07-18) — Post-start max correction
+| # | Decision |
+|---|---|
+| D26 | **Wounds/Shock maximums are GM-correctable after start.** A max entered wrong at character setup no longer forces a rejoin: the GM console's party cards get a **✎ hero-edit dialog** (steppers + numeric inputs, "now at N" captions) that PATCHes the existing `maxWounds`/`maxShock` fields on `PATCH /players/{id}` with the **GM token** (already allowed by the §4 matrix; D23 limits apply). **Players cannot** change maxima post-setup from the main view — GM-only keeps the mid-session surface small. Lowering a max **re-clamps the stored current** down to match (server-side, same rule as setup). |
 
 ---
 
@@ -253,7 +258,8 @@ Everything players see, denser, multi-column, **plus inline controls**:
 - **Counters row:** Glory & Ruin with **+/−** and **set-value**; **Ruin visibility toggle**.
 - **Round control:** **Next round** (confirm — resets acted flags); manual per-player acted toggles.
 - **Party panel:** each character editable — Wounds/Shock/Wrath steppers, **condition picker**
-  (presets + custom), **status** dropdown (active/down/dying/dead/stable). (GM override.)
+  (presets + custom), **status** dropdown (active/down/dying/dead/stable), **✎ hero-edit dialog**
+  (correct the setup **max** Wounds/Shock mid-session — D26). (GM override.)
 - **Mob panel:** **Add mob** dialog (label, tier, max HP, count 1–8, starts-hidden — D18) → defaults
   **unrevealed**; **inline rename** (click the name — D18); per-mob **acted** toggle (D15); **Reveal**
   toggle; **Duplicate**; exact-HP stepper **with the derived coarse badge shown beside it**;

@@ -184,7 +184,10 @@ export async function getState<T extends GmSnapshot | PlayerSnapshot = GmSnapsho
 
 // ---- Player mutations (Phase 1) --------------------------------------------
 
-/** Fields a player may PATCH on their own card (all optional; server clamps/validates). */
+/**
+ * Fields a player may PATCH on their own card — or the GM on any hero (D26 max
+ * corrections). All optional; server clamps/validates.
+ */
 export interface PlayerPatch {
   /** Character-setup max (D16 range). Raising/lowering re-clamps the current track server-side. */
   maxWounds?: number;
@@ -207,7 +210,10 @@ export function adjustGlory(code: string, token: string, delta: number): Promise
   });
 }
 
-/** PATCH /sessions/{code}/players/{playerId} — edit one's own card (Bearer player token). */
+/**
+ * PATCH /sessions/{code}/players/{playerId} — a player token edits its own card;
+ * the GM token may edit any hero (§4 matrix — used by the ✎ hero-edit dialog).
+ */
 export function updatePlayer(
   code: string,
   token: string,
