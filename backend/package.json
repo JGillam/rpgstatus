@@ -2,6 +2,7 @@
   "name": "@wg/backend",
   "private": true,
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Lambda handlers, domain logic, and shared domain types",
   "main": "src/index.ts",

@@ -1,8 +1,9 @@
 {
-  "name": "wh40k-wg-assistant",
+  "name": "rpgstatus",
   "private": true,
   "version": "0.1.0",
-  "description": "Wrath & Glory Session Assistant — a shared, at-a-glance status board for the table",
+  "license": "AGPL-3.0-only",
+  "description": "Session status boards for tabletop RPG tables — first game: Wrath & Glory",
   "workspaces": [
     "backend",
     "frontend",

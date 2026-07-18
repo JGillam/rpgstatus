@@ -2,7 +2,8 @@
   "name": "@wg/infra",
   "private": true,
   "version": "0.1.0",
-  "description": "AWS CDK app, single stack, us-east-1 (deploy with --profile jason-deploy)",
+  "license": "AGPL-3.0-only",
+  "description": "AWS CDK app, single stack, us-east-1",
   "scripts": {
     "synth": "cdk synth",
     "typecheck": "tsc --noEmit"

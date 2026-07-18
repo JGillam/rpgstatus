@@ -19,7 +19,8 @@ import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 
-// Domain + DNS (D25). Hosted zone pre-exists in the jason-deploy account.
+// Domain + DNS (D25). The hosted zone pre-exists in the target AWS account.
+// Self-hosters: replace these constants with your own domain + hosted zone.
 const DOMAIN = 'rpgstatus.com';
 const APP_HOST = `wrathandglory.${DOMAIN}`;
 const APP_RECORD_NAME = 'wrathandglory';

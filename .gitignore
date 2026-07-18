@@ -8,6 +8,7 @@ cdk.out/
 .env
 .env.*
 *.local
+cdk.context.json
 .claude/settings.local.json
 
 # os / editor

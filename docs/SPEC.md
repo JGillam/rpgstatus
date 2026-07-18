@@ -74,7 +74,7 @@ bar on **abuse resistance**.
 ### Round 5 (2026-07-17) — Domain & hosting
 | # | Decision |
 |---|---|
-| D25 | **Domain = `rpgstatus.com`** (newly registered; Route 53 hosted zone already exists in the `jason-deploy` account). The app is served at **`wrathandglory.rpgstatus.com`**; the **apex `rpgstatus.com` redirects** (temporary **302** — the apex may later become a multi-game hub) to that host. **ACM cert (us-east-1)** covers `rpgstatus.com` + **`*.rpgstatus.com`** (wildcard future-proofs one subdomain per game, deferred). Redirect implemented as a **302 via a dedicated apex CloudFront distribution + a CloudFront Function** (not `HttpsRedirect`, which only emits a 301). Wired in step 3 (infra). |
+| D25 | **Domain = `rpgstatus.com`** (newly registered; Route 53 hosted zone already exists in the deploy account). The app is served at **`wrathandglory.rpgstatus.com`**; the **apex `rpgstatus.com` redirects** (temporary **302** — the apex may later become a multi-game hub) to that host. **ACM cert (us-east-1)** covers `rpgstatus.com` + **`*.rpgstatus.com`** (wildcard future-proofs one subdomain per game, deferred). Redirect implemented as a **302 via a dedicated apex CloudFront distribution + a CloudFront Function** (not `HttpsRedirect`, which only emits a 301). Wired in step 3 (infra). |
 
 ### Round 6 (2026-07-18) — Post-start max correction
 | # | Decision |
@@ -84,7 +84,7 @@ bar on **abuse resistance**.
 ### Round 7 (2026-07-18) — Poll cadence
 | # | Decision |
 |---|---|
-| D27 | **Casual-table poll cadence, not RTS sync.** The original ~2.5s shared poll made the freshness badge flip 0s↔1s and burned request budget for no table benefit. New cadence: **GM console 5s** (admits/table control lead), **player screen 8s** (passive board — the slower end, per Jason), **waiting-room claim stays 2.5s** (admission should land promptly). Mutations still trigger an **immediate refresh** for reconcile, and returning to a tab polls at once — only *passive* staleness grows. Freshness-indicator thresholds derive from the cadence so a healthy cycle always reads "fresh". |
+| D27 | **Casual-table poll cadence, not RTS sync.** The original ~2.5s shared poll made the freshness badge flip 0s↔1s and burned request budget for no table benefit. New cadence: **GM console 5s** (admits/table control lead), **player screen 8s** (passive board — deliberately the slower end), **waiting-room claim stays 2.5s** (admission should land promptly). Mutations still trigger an **immediate refresh** for reconcile, and returning to a tab polls at once — only *passive* staleness grows. Freshness-indicator thresholds derive from the cadence so a healthy cycle always reads "fresh". |
 
 ---
 
@@ -477,7 +477,7 @@ traffic (WAF is the main thing that would move the needle).
 
 - **IaC:** AWS **CDK (TypeScript)**, single stack (S3+CloudFront[+CF Function][+WAF], API GW HTTP API,
   Lambda, DynamoDB), **us-east-1**.
-- **Domain/DNS (D25):** **`rpgstatus.com`** in Route 53 (existing hosted zone, `jason-deploy` account);
+- **Domain/DNS (D25):** **`rpgstatus.com`** in Route 53 (existing hosted zone in the deploy account);
   app host **`wrathandglory.rpgstatus.com`** as a CloudFront alternate domain; **ACM cert us-east-1**
   for `rpgstatus.com` + `*.rpgstatus.com`; **apex → app** 302 redirect via a CloudFront Function on a
   dedicated apex distribution. Future games = sibling `<game>.rpgstatus.com` hosts (deferred).
@@ -493,7 +493,7 @@ traffic (WAF is the main thing that would move the needle).
   /data        conditions.json (names + help text)
   /docs        this spec, ADRs
   ```
-- **Deploy:** `cdk deploy --profile jason-deploy` (us-east-1); optional GitHub Action later.
+- **Deploy:** `cdk deploy --profile <your-aws-profile>` (us-east-1); optional GitHub Action later.
 
 ---
 

@@ -597,7 +597,7 @@ describe('mobs (POST / PATCH / DELETE / duplicate)', () => {
     expect(parse(await mobs(makeEvent({ code, method: 'POST', token: playerToken, body: { count: 2 } }))).status).toBe(403);
 
     const created = await addMobs(code, gmToken, {
-      label: 'Ork Boy',
+      label: 'Raider',
       tier: 'Elite',
       maxHp: 10,
       count: 99, // over the cap
@@ -606,7 +606,7 @@ describe('mobs (POST / PATCH / DELETE / duplicate)', () => {
     expect(created).toHaveLength(8); // clamped 99 → LIMITS.addMobCount.max
     for (const m of created) {
       expect(m).toMatchObject({
-        label: 'Ork Boy',
+        label: 'Raider',
         tier: 'Elite',
         maxHp: 10,
         hp: 10, // hp starts at maxHp
