@@ -239,6 +239,19 @@ const ABOUT_ITEMS: ReactNode[] = [
     session and are deleted automatically within 72 hours. By using this site you consent to this
     temporary storage.
   </>,
+  <>
+    Open source under the AGPL-3.0 license. Browse the code, report bugs, suggest features, or run
+    your own copy:{' '}
+    <a
+      href="https://github.com/JGillam/rpgstatus"
+      target="_blank"
+      rel="noreferrer"
+      className="underline underline-offset-2 transition-colors hover:text-muted"
+    >
+      github.com/JGillam/rpgstatus
+    </a>
+    .
+  </>,
 ];
 
 function SiteFooter() {
@@ -257,28 +270,51 @@ function SiteFooter() {
         <p className="mt-[9px] max-w-[300px] text-[11px] italic leading-[1.55] text-faint">
           Not affiliated with, endorsed by, or licensed by Games Workshop or Cubicle 7.
         </p>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="mt-[15px] inline-flex items-center gap-1.5 rounded-full border border-[#2e2718] bg-transparent px-3.5 py-2 font-display text-[9px] font-semibold leading-none tracking-[1.5px] text-[#8a8069] transition-colors hover:border-strong hover:text-muted"
-        >
-          ABOUT THIS SITE
-          <svg
-            width={11}
-            height={11}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2.4}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-            style={{ transition: 'transform 0.25s ease', transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}
+        <div className="mt-[15px] flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[#2e2718] bg-transparent px-3.5 py-2 font-display text-[9px] font-semibold leading-none tracking-[1.5px] text-[#8a8069] transition-colors hover:border-strong hover:text-muted"
           >
-            <path d="M6 9l6 6 6-6" />
-          </svg>
-        </button>
+            ABOUT THIS SITE
+            <svg
+              width={11}
+              height={11}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.4}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+              style={{ transition: 'transform 0.25s ease', transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+          <a
+            href="https://github.com/JGillam/rpgstatus"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[#2e2718] bg-transparent px-3.5 py-2 font-display text-[9px] font-semibold leading-none tracking-[1.5px] text-[#8a8069] transition-colors hover:border-strong hover:text-muted"
+          >
+            SOURCE &amp; FEEDBACK
+            <svg
+              width={10}
+              height={10}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.4}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M7 17L17 7M9 7h8v8" />
+            </svg>
+          </a>
+        </div>
       </div>
       {open && (
         <div
