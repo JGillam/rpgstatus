@@ -1,4 +1,10 @@
+import { POLL_PLAYER_MS } from '@/lib/useSessionState';
 import { cn } from '@/lib/utils';
+
+// Thresholds track the player-screen cadence (D27): a healthy cycle (≤ poll + 1s of
+// ticker skew) stays green; one missed poll goes amber; beyond that, orange.
+const FRESH_S = POLL_PLAYER_MS / 1000 + 1;
+const AGING_S = FRESH_S + POLL_PLAYER_MS / 1000;
 
 interface FreshnessDotProps {
   secondsAgo: number;
@@ -20,9 +26,9 @@ export function FreshnessDot({ secondsAgo, updatedAt, error, className }: Freshn
     ? 'bg-wounds'
     : connecting
       ? 'bg-minor animate-pulse'
-      : secondsAgo <= 6
+      : secondsAgo <= FRESH_S
         ? 'bg-status-active'
-        : secondsAgo <= 15
+        : secondsAgo <= AGING_S
           ? 'bg-minor'
           : 'bg-gravely';
 

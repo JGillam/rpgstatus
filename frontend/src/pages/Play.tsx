@@ -13,7 +13,7 @@ import { clampCurrent, clampWrath, decodeLog, formatLog, LIMITS, nextCounter } f
 import { Check, Download, Eye, X } from 'lucide-react';
 import { adjustGlory, updatePlayer, type PlayerPatch } from '@/lib/api';
 import { clearIdentity, loadIdentity } from '@/lib/identity';
-import { useSessionState } from '@/lib/useSessionState';
+import { POLL_PLAYER_MS, useSessionState } from '@/lib/useSessionState';
 import { coarseColor, coarseLabel, statusColor, statusLabel } from '@/lib/theme';
 import { CONDITIONS, conditionDef } from '@/lib/conditions';
 import { FreshnessDot } from '@/components/FreshnessDot';
@@ -46,7 +46,10 @@ export default function Play() {
   const navigate = useNavigate();
   const identity = useMemo(() => loadIdentity(), []);
 
-  const args = identity?.role === 'player' ? { code: identity.code, token: identity.token } : null;
+  const args =
+    identity?.role === 'player'
+      ? { code: identity.code, token: identity.token, pollMs: POLL_PLAYER_MS }
+      : null;
   const { snapshot, secondsAgo, updatedAt, error, status, loading, refresh } =
     useSessionState<PlayerSnapshot>(args);
 

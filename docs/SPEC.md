@@ -1,6 +1,6 @@
 # Wrath & Glory Session Assistant — Design Spec
 
-**Status:** v0.7 — rounds 1–6 folded in; rounds 3–4 = Claude Design review, round 5 = domain & hosting, round 6 = post-start max correction.
+**Status:** v0.8 — rounds 1–7 folded in; rounds 3–4 = Claude Design review, round 5 = domain & hosting, round 6 = post-start max correction, round 7 = poll cadence.
 **Last updated:** 2026-07-18
 
 ---
@@ -80,6 +80,11 @@ bar on **abuse resistance**.
 | # | Decision |
 |---|---|
 | D26 | **Wounds/Shock maximums are GM-correctable after start.** A max entered wrong at character setup no longer forces a rejoin: the GM console's party cards get a **✎ hero-edit dialog** (steppers + numeric inputs, "now at N" captions) that PATCHes the existing `maxWounds`/`maxShock` fields on `PATCH /players/{id}` with the **GM token** (already allowed by the §4 matrix; D23 limits apply). **Players cannot** change maxima post-setup from the main view — GM-only keeps the mid-session surface small. Lowering a max **re-clamps the stored current** down to match (server-side, same rule as setup). |
+
+### Round 7 (2026-07-18) — Poll cadence
+| # | Decision |
+|---|---|
+| D27 | **Casual-table poll cadence, not RTS sync.** The original ~2.5s shared poll made the freshness badge flip 0s↔1s and burned request budget for no table benefit. New cadence: **GM console 5s** (admits/table control lead), **player screen 8s** (passive board — the slower end, per Jason), **waiting-room claim stays 2.5s** (admission should land promptly). Mutations still trigger an **immediate refresh** for reconcile, and returning to a tab polls at once — only *passive* staleness grows. Freshness-indicator thresholds derive from the cadence so a healthy cycle always reads "fresh". |
 
 ---
 
@@ -218,8 +223,8 @@ Compact, append-only, attributed record of resource changes — cheap to store a
   but glanceability > flavor. Big numbers, strong contrast.
 - **Identity persistence:** each client stores its **token + role + session code + (player index)** in
   **localStorage** so a refresh/reboot returns straight to the session (D4/D13).
-- **Freshness cue:** a subtle "updated Xs ago"/live dot, since sync is polling (a few seconds of lag
-  is expected and fine).
+- **Freshness cue:** a subtle "updated Xs ago"/live dot, since sync is polling (several seconds of
+  lag is expected and fine — casual-table pacing, D27).
 
 ### 7.2 Landing / entry (all)
 Minimal, mobile-first: **"Start a session (GM)"** and a **"Join"** form (code + name). No login wall.
@@ -333,7 +338,7 @@ backend, and **API Gateway throttling + token auth** for lock-down.
 - **Read path:** clients `GET /state/<code>` every ~2–3s. CloudFront caches per-code ~1–2s, so N
   clients collapse to ~1 origin read per cache window per session. `If-None-Match` enables cheap 304s.
 - **Write path:** `POST /…` mutations skip cache → API GW (throttled) → Lambda → DynamoDB
-  (atomic updates / log append). Bounded staleness = cacheTTL + poll ≈ a few seconds.
+  (atomic updates / log append). Bounded staleness = cacheTTL + poll ≈ several seconds (D27).
 - **Coarse mob HP** and **unrevealed filtering** happen **server-side**; player tokens never receive
   exact HP or hidden mobs.
 
@@ -410,7 +415,8 @@ Both are fractions of a cent, so cost isn't the deciding factor at 11 users — 
 ## 11. Consistency, Polling & GM Resilience
 
 - **Server-authoritative.** Clients render optimistically, reconcile to the next polled snapshot →
-  no drift. Bounded staleness = cacheTTL + poll ≈ a few seconds (fine for a status board).
+  no drift. Bounded staleness = cacheTTL + poll ≈ several seconds (fine for a status board;
+  cadence per D27: GM 5s, player 8s, waiting-room claim 2.5s).
 - **Atomic shared counters & log-append** → simultaneous pushes/pulls never clobber.
 - **GM reboot / lost connection (D4).** GM token in **localStorage** survives a browser restart; state
   is server-side, so on reconnect the GM re-reads current state and loses nothing. **Different-laptop
@@ -527,7 +533,7 @@ Rounds 1–2 are resolved (§2). Remaining:
 | Condition text copyright-heavy | `conditions.json` ships **paraphrased** summaries (not verbatim) from the verified reference; proof-read before public release; presets + custom stay editable. |
 | Public abuse (endpoint hammering, code-guessing) | Token auth (edge-validated reads), API GW throttling, origin locked behind CloudFront, brief 403/404 caching, optional WAF (§12). |
 | Lost updates from concurrent edits / Glory pushes | Per-item writes, atomic counters, atomic log-append (§9). |
-| Polling staleness feels laggy | ~2s cache + ~2–3s poll ≈ a few seconds; tune TTL; WebSockets remain a later option. |
+| Polling staleness feels laggy | ~2s cache + 5s GM / 8s player poll (D27 — deliberate casual-table pace); mutations refresh immediately; tune cadence/TTL; WebSockets remain a later option. |
 | Scope creep into a VTT / rules engine | Explicit non-goals (§3); board stays authoritative; no consensus/initiative enforcement. |
 | GM loses connection/reboots | localStorage token + server-authoritative state (§11); different-laptop out of scope by choice. |
 

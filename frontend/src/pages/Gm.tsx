@@ -39,7 +39,7 @@ import {
   type PlayerPatch,
 } from '@/lib/api';
 import { clearIdentity, loadIdentity } from '@/lib/identity';
-import { useSessionState } from '@/lib/useSessionState';
+import { POLL_GM_MS, useSessionState } from '@/lib/useSessionState';
 import { coarseColor, coarseLabel, statusColor, statusLabel } from '@/lib/theme';
 import { CONDITIONS, conditionDef } from '@/lib/conditions';
 import { Dialog } from '@/components/Dialog';
@@ -97,7 +97,10 @@ export default function Gm() {
   const navigate = useNavigate();
   const identity = useMemo(() => loadIdentity(), []);
 
-  const args = identity?.role === 'gm' ? { code: identity.code, token: identity.token } : null;
+  const args =
+    identity?.role === 'gm'
+      ? { code: identity.code, token: identity.token, pollMs: POLL_GM_MS }
+      : null;
   const { snapshot, secondsAgo, updatedAt, error, status, loading, refresh } =
     useSessionState<GmSnapshot>(args);
 

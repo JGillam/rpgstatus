@@ -6,12 +6,22 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GmSnapshot, PlayerSnapshot } from '@domain';
 import { ApiError, getState } from './api';
 
-/** Poll cadence (ms). ~2.5s balances freshness against the create/join throttle budget. */
-export const POLL_MS = 2500;
+/**
+ * Poll cadences (ms) — deliberately casual-table pace, not RTS sync (D27).
+ * The GM console leads (admits and table control should feel responsive); player
+ * boards trail. Mutations still `refresh()` immediately, so interactions reconcile
+ * fast — only passive staleness grows. The waiting room keeps its own quicker
+ * claim cadence so "the GM admitted you" lands promptly.
+ */
+export const POLL_GM_MS = 5000;
+export const POLL_PLAYER_MS = 8000;
+export const POLL_CLAIM_MS = 2500;
 
 export interface SessionStateArgs {
   code: string;
   token: string;
+  /** Poll interval for this screen — pass POLL_GM_MS or POLL_PLAYER_MS. */
+  pollMs: number;
 }
 
 /**
@@ -65,9 +75,10 @@ export function useSessionState<T extends GmSnapshot | PlayerSnapshot = GmSnapsh
 
   const code = args?.code ?? null;
   const token = args?.token ?? null;
+  const pollMs = args?.pollMs ?? null;
 
   useEffect(() => {
-    if (!code || !token) {
+    if (!code || !token || !pollMs) {
       setLoading(false);
       return;
     }
@@ -113,7 +124,7 @@ export function useSessionState<T extends GmSnapshot | PlayerSnapshot = GmSnapsh
 
     runRef.current = run;
     void run();
-    const interval = window.setInterval(run, POLL_MS);
+    const interval = window.setInterval(run, pollMs);
     const onVisibility = () => {
       if (document.visibilityState === 'visible') void run();
     };
@@ -125,7 +136,7 @@ export function useSessionState<T extends GmSnapshot | PlayerSnapshot = GmSnapsh
       document.removeEventListener('visibilitychange', onVisibility);
       inFlightRef.current?.abort();
     };
-  }, [code, token]);
+  }, [code, token, pollMs]);
 
   // Independent 1s ticker so "updated Ns ago" advances between polls.
   useEffect(() => {

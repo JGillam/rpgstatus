@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { claim } from '@/lib/api';
 import { clearIdentity, clearPending, loadPending, saveIdentity } from '@/lib/identity';
-import { POLL_MS } from '@/lib/useSessionState';
+import { POLL_CLAIM_MS } from '@/lib/useSessionState';
 import { Emblem } from '@/components/Takeover';
 
 type Phase = 'waiting' | 'declined';
@@ -47,7 +47,7 @@ export default function Waiting() {
     };
 
     void poll();
-    const interval = window.setInterval(poll, POLL_MS);
+    const interval = window.setInterval(poll, POLL_CLAIM_MS);
     return () => {
       active = false;
       window.clearInterval(interval);
