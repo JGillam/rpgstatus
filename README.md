@@ -6,6 +6,9 @@ Session status boards for tabletop RPG tables. One game so far: **Wrath & Glory*
 > **Unofficial fan project.** Not affiliated with, endorsed by, or licensed by Games Workshop or
 > Cubicle 7. *Wrath & Glory* and *Warhammer 40,000* are trademarks of their respective owners.
 
+**The hosted instance is currently free to use** — no account, no ads. No guarantees that holds
+forever; if it ever changes, the code is AGPL and self-hosting will always be an option.
+
 ## What it is
 
 A shared, at-a-glance "second screen" for big, casual tables (think ~10 players plus a GM). The
