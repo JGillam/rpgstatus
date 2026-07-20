@@ -235,6 +235,10 @@ const ABOUT_ITEMS: ReactNode[] = [
   </>,
   <>Provided as-is, with no warranty of any kind. Use at your own risk.</>,
   <>
+    The hosted service is currently free to use. That may change someday — the code is open
+    source, so you can always run your own copy.
+  </>,
+  <>
     No accounts, no personal data collected. The names and stats you enter exist only to run your
     session and are deleted automatically within 72 hours. By using this site you consent to this
     temporary storage. Anonymous, aggregate usage counts (sessions, players per session, rounds)
